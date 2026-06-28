@@ -17,6 +17,9 @@ const AIRPORT_COORDS: Record<string, [number, number]> = {
   EBBR: [50.9014, 4.4844],
   LSZH: [47.4647, 8.5492],
   LSGG: [46.2381, 6.1089],
+  LFML: [43.4367, 5.2158],
+  LFLL: [45.7256, 5.0811],
+  LFMN: [43.6584, 7.2159],
 };
 
 const markerIcon = L.divIcon({
@@ -31,47 +34,49 @@ interface FlightMapProps {
 }
 
 export default function FlightMap({ departureIcao, destinationIcao }: FlightMapProps) {
-  const departure = AIRPORT_COORDS[departureIcao] || [0, 0];
-  const destination = AIRPORT_COORDS[destinationIcao] || [0, 0];
-  const route = useMemo(() => [departure, destination], [departure, destination]);
-  const center = useMemo(
-    () => [
-      (departure[0] + destination[0]) / 2,
-      (departure[1] + destination[1]) / 2,
-    ] as [number, number],
-    [departure, destination]
-  );
-
-  const validRoute = departureIcao in AIRPORT_COORDS && destinationIcao in AIRPORT_COORDS;
-
-  if (!validRoute) {
-    return (
-      <div className="rounded bg-zinc-100 dark:bg-zinc-800 p-4 text-zinc-700 dark:text-zinc-200">
-        Impossible d’afficher la carte : codes ICAO inconnus ou pas de coordonnées disponibles.
-      </div>
-    );
-  }
+  const departure = AIRPORT_COORDS[departureIcao];
+  const destination = AIRPORT_COORDS[destinationIcao];
+  const hasRoute = Boolean(departure && destination);
+  const route = useMemo(() => (hasRoute ? [departure!, destination!] : []), [departure, destination, hasRoute]);
+  const center = useMemo(() => {
+    if (hasRoute) {
+      return [
+        ((departure![0] + destination![0]) / 2) as number,
+        ((departure![1] + destination![1]) / 2) as number,
+      ] as [number, number];
+    }
+    return [20, 0] as [number, number];
+  }, [departure, destination, hasRoute]);
 
   return (
-    <div className="rounded overflow-hidden border border-zinc-200 dark:border-zinc-700">
+    <div className="rounded overflow-hidden border border-zinc-200 dark:border-zinc-700" style={{ minHeight: "24rem" }}>
       <MapContainer
         center={center}
-        zoom={5}
-        scrollWheelZoom={false}
-        className="h-96 w-full"
+        zoom={hasRoute ? 5 : 2}
+        scrollWheelZoom={true}
+        style={{ height: "24rem", width: "100%" }}
       >
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community'
+          url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
         />
-        <Marker position={departure} icon={markerIcon}>
-          <Popup>{departureIcao}</Popup>
-        </Marker>
-        <Marker position={destination} icon={markerIcon}>
-          <Popup>{destinationIcao}</Popup>
-        </Marker>
-        <Polyline positions={route} pathOptions={{ color: "#2563eb", weight: 4 }} />
+        {hasRoute ? (
+          <>
+            <Marker position={departure!} icon={markerIcon}>
+              <Popup>{departureIcao}</Popup>
+            </Marker>
+            <Marker position={destination!} icon={markerIcon}>
+              <Popup>{destinationIcao}</Popup>
+            </Marker>
+            <Polyline positions={route} pathOptions={{ color: "#00d2ff", weight: 4 }} />
+          </>
+        ) : null}
       </MapContainer>
+      {!hasRoute ? (
+        <div className="rounded-b bg-zinc-100 dark:bg-zinc-800 p-3 text-zinc-700 dark:text-zinc-200">
+          Carte mondiale affichée, mais le vol ne peut pas être tracé car les coordonnées de l’aéroport sont inconnues.
+        </div>
+      ) : null}
     </div>
   );
 }
