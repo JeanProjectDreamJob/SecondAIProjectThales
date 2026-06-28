@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.env
+.env
+venv/
+.venv/
+backend/.venv/
+
+# Node
+node_modules/
+.npm/
+.npmrc
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+.next/
+out/
+
+# Editor
+.DS_Store
+.vscode/
+.idea/
