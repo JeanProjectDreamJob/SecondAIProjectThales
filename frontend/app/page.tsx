@@ -3,13 +3,13 @@
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 
-const DEFAULT_PROMPT = "Flight between Vienna and Paris at FL350";
+const DEFAULT_PROMPT = "Flight between Vienna and Paris at FL350\nFlight between Singapore and Marseille at FL360";
 const FlightMap = dynamic(() => import("../components/FlightMap"), { ssr: false });
 
 export default function Home() {
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
   const [tpl, setTpl] = useState<string | null>(null);
-  const [plan, setPlan] = useState<Record<string, string> | null>(null);
+  const [plans, setPlans] = useState<Array<Record<string, string>> | null>(null);
   const [filename, setFilename] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +30,7 @@ export default function Home() {
       }
       const data = await res.json();
       setTpl(data.tpl);
-      setPlan(data.plan || null);
+      setPlans(data.plans || (data.plan ? [data.plan] : null));
       setFilename(data.filename || "plan.tpl");
     } catch (e: any) {
       setError(e.message || String(e));
@@ -87,10 +87,18 @@ export default function Home() {
           <div>
             <h2 className="font-medium mb-2">Aperçu TPL</h2>
             <pre className="bg-black text-white p-3 rounded overflow-auto">{tpl}</pre>
-            {plan?.departure && plan?.destination ? (
+            {plans?.length ? (
               <div className="mt-6">
-                <h2 className="font-medium mb-2">Vue du vol</h2>
-                <FlightMap departureIcao={plan.departure} destinationIcao={plan.destination} />
+                <h2 className="font-medium mb-2">Plans dans ce TPL</h2>
+                <div className="space-y-2 mb-4">
+                  {plans.map((planItem) => (
+                    <div key={planItem.callsign} className="rounded border border-zinc-200 dark:border-zinc-700 p-3 bg-zinc-50 dark:bg-zinc-950">
+                      <strong>{planItem.callsign}</strong>: {planItem.departure} → {planItem.destination}
+                    </div>
+                  ))}
+                </div>
+                <h2 className="font-medium mb-2">Vue des vols</h2>
+                <FlightMap plans={plans} />
               </div>
             ) : null}
           </div>

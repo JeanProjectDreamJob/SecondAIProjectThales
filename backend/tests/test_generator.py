@@ -44,3 +44,35 @@ def test_empty_prompt_uses_default_sample():
 
     assert plan["departure"] == "LOWW"
     assert plan["destination"] == "LFPG"
+
+
+def test_generate_tpl_multiple_plans():
+    plans = [
+        {
+            "callsign": "TESTA",
+            "departure": "LOWW",
+            "destination": "LFPG",
+            "departure_date": "-",
+            "flight_level": "FL350",
+            "aircraft_type": None,
+            "route": None,
+            "speed": None,
+        },
+        {
+            "callsign": "TESTB",
+            "departure": "WSSS",
+            "destination": "LFMN",
+            "departure_date": "-",
+            "flight_level": "FL360",
+            "aircraft_type": None,
+            "route": None,
+            "speed": None,
+        },
+    ]
+    tpl = generate_tpl(plans)
+
+    assert tpl.count("ACID:") == 2
+    assert "ADEP: LOWW" in tpl
+    assert "ADES: LFPG" in tpl
+    assert "ADEP: WSSS" in tpl
+    assert "ADES: LFMN" in tpl

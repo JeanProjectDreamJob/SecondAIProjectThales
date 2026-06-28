@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, List, Union
 
 
 def _safe_get(d: Dict, key: str, default: str = "-") -> str:
@@ -6,13 +6,7 @@ def _safe_get(d: Dict, key: str, default: str = "-") -> str:
     return str(v) if v is not None else default
 
 
-def generate_tpl(plan: Dict) -> str:
-    """Generate a simple EUROCONTROL-like TPL content from a structured plan.
-
-    The output follows a compact, line-based representation containing
-    required flight identifiers. This generator focuses on structure and
-    validation for MVP; further EUROCONTROL-specific rules can be added.
-    """
+def _plan_lines(plan: Dict) -> List[str]:
     callsign = _safe_get(plan, "callsign")
     dep = _safe_get(plan, "departure")
     dest = _safe_get(plan, "destination")
@@ -23,7 +17,6 @@ def generate_tpl(plan: Dict) -> str:
     speed = _safe_get(plan, "speed", "N/A")
 
     lines = []
-    lines.append("TPL-FILE: EUROCONTROL-MVP")
     lines.append(f"ACID: {callsign}")
     lines.append(f"ADEP: {dep}")
     lines.append(f"ADES: {dest}")
@@ -37,10 +30,36 @@ def generate_tpl(plan: Dict) -> str:
     lines.append(route)
     lines.append("")
     lines.append("--END--")
+    return lines
+
+
+def generate_tpl(plan: Union[Dict, List[Dict]]) -> str:
+    """Generate a simple EUROCONTROL-like TPL content from one or more structured plans.
+
+    The output follows a compact, line-based representation containing
+    required flight identifiers. This generator focuses on structure and
+    validation for MVP; further EUROCONTROL-specific rules can be added.
+    """
+    if isinstance(plan, list):
+        lines = ["TPL-FILE: EUROCONTROL-MVP"]
+        for item in plan:
+            lines.extend(_plan_lines(item))
+            lines.append("")
+        return "\n".join(lines).strip()
+
+    lines = ["TPL-FILE: EUROCONTROL-MVP"]
+    lines.extend(_plan_lines(plan))
     return "\n".join(lines)
 
 
-def validate_plan(plan: Dict) -> None:
+def validate_plan(plan: Union[Dict, List[Dict]]) -> None:
+    if isinstance(plan, list):
+        if not plan:
+            raise ValueError("Missing required fields: callsign, departure, destination")
+        for item in plan:
+            validate_plan(item)
+        return
+
     required = ["callsign", "departure", "destination"]
     missing = [f for f in required if not plan.get(f)]
     if missing:

@@ -97,7 +97,21 @@ def _normalize_prompt(prompt: str | None) -> str:
 	return text or DEFAULT_PROMPT
 
 
-def _normalize_plan(plan: dict) -> dict:
+def _split_prompts(prompt: str) -> list[str]:
+	lines = [line.strip() for line in re.split(r"[\r\n]+", prompt) if line.strip()]
+	return lines or [DEFAULT_PROMPT]
+
+
+def _parse_prompt_line(prompt: str) -> dict:
+	try:
+		return _llm_parse(prompt)
+	except Exception:
+		return _fallback_parse(prompt)
+
+
+def _normalize_plan(plan: dict | list[dict]) -> dict | list[dict]:
+	if isinstance(plan, list):
+		return [_normalize_plan(p) for p in plan]  # type: ignore[return-value]
 	out = dict(plan)
 	out["departure"] = _to_icao_code(out.get("departure"))
 	out["destination"] = _to_icao_code(out.get("destination"))
@@ -173,27 +187,27 @@ def _llm_parse(prompt: str) -> dict:
 @app.post("/generate-tpl")
 async def generate_tpl_endpoint(body: PromptIn):
 	prompt = _normalize_prompt(body.prompt)
-	plan = None
-	# Try LLM parser first when available
-	try:
-		plan = _llm_parse(prompt)
-	except Exception:
-		plan = _fallback_parse(prompt)
-
-	plan = _normalize_plan(plan)
+	plans = []
+	for prompt_line in _split_prompts(prompt):
+		plan = _parse_prompt_line(prompt_line)
+		plan = _normalize_plan(plan)
+		plans.append(plan)
 
 	# minimal validation
 	try:
-		validate_plan(plan)
+		validate_plan(plans)
 	except Exception as e:
 		raise HTTPException(status_code=400, detail=str(e))
 
-	tpl = generate_tpl(plan)
+	tpl = generate_tpl(plans)
+	filename = (
+		"multi-plan.tpl" if len(plans) > 1 else f"{plans[0].get('callsign','plan')}.tpl"
+	)
 
 	return JSONResponse({
 		"tpl": tpl,
-		"filename": f"{plan.get('callsign','plan')}.tpl",
-		"plan": plan,
+		"filename": filename,
+		"plans": plans,
 	})
 
 

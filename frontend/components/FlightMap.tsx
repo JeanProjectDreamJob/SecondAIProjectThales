@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { MapContainer, TileLayer, Marker, Polyline, Popup } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Polyline, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -28,53 +28,78 @@ const markerIcon = L.divIcon({
   iconAnchor: [8, 8],
 });
 
-interface FlightMapProps {
-  departureIcao: string;
-  destinationIcao: string;
+interface PlanItem {
+  departure?: string;
+  destination?: string;
+  callsign?: string;
 }
 
-export default function FlightMap({ departureIcao, destinationIcao }: FlightMapProps) {
-  const departure = AIRPORT_COORDS[departureIcao];
-  const destination = AIRPORT_COORDS[destinationIcao];
-  const hasRoute = Boolean(departure && destination);
-  const route = useMemo(() => (hasRoute ? [departure!, destination!] : []), [departure, destination, hasRoute]);
+interface FlightMapProps {
+  plans?: PlanItem[] | null;
+}
+
+function FitBounds({ points }: { points: [number, number][] }) {
+  const map = useMap();
+  if (!points || points.length === 0) return null;
+  const bounds = L.latLngBounds(points as any);
+  map.fitBounds(bounds, { padding: [40, 40] });
+  return null;
+}
+
+const COLORS = ["#00d2ff", "#ff7a00", "#8b5cf6", "#10b981"];
+
+export default function FlightMap({ plans }: FlightMapProps) {
+  const validRoutes = useMemo(() => {
+    if (!plans) return [] as Array<{ callsign?: string; departure: [number, number]; destination: [number, number]; color: string }>;
+    return plans
+      .map((p, idx) => {
+        const d = p.departure ? AIRPORT_COORDS[p.departure] : undefined;
+        const dest = p.destination ? AIRPORT_COORDS[p.destination] : undefined;
+        if (!d || !dest) return null;
+        return { callsign: p.callsign, departure: d, destination: dest, color: COLORS[idx % COLORS.length] };
+      })
+      .filter(Boolean) as Array<{ callsign?: string; departure: [number, number]; destination: [number, number]; color: string }>;
+  }, [plans]);
+
+  const allPoints = useMemo(() => {
+    const pts: [number, number][] = [];
+    validRoutes.forEach((r) => {
+      pts.push(r.departure);
+      pts.push(r.destination);
+    });
+    return pts;
+  }, [validRoutes]);
+
   const center = useMemo(() => {
-    if (hasRoute) {
-      return [
-        ((departure![0] + destination![0]) / 2) as number,
-        ((departure![1] + destination![1]) / 2) as number,
-      ] as [number, number];
-    }
-    return [20, 0] as [number, number];
-  }, [departure, destination, hasRoute]);
+    if (allPoints.length === 0) return [20, 0] as [number, number];
+    const lat = allPoints.reduce((s, p) => s + p[0], 0) / allPoints.length;
+    const lon = allPoints.reduce((s, p) => s + p[1], 0) / allPoints.length;
+    return [lat, lon] as [number, number];
+  }, [allPoints]);
 
   return (
     <div className="rounded overflow-hidden border border-zinc-200 dark:border-zinc-700" style={{ minHeight: "24rem" }}>
-      <MapContainer
-        center={center}
-        zoom={hasRoute ? 5 : 2}
-        scrollWheelZoom={true}
-        style={{ height: "24rem", width: "100%" }}
-      >
+      <MapContainer center={center} zoom={allPoints.length ? 3 : 2} scrollWheelZoom={true} style={{ height: "24rem", width: "100%" }}>
         <TileLayer
           attribution='Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community'
           url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
         />
-        {hasRoute ? (
+        {validRoutes.map((r) => (
           <>
-            <Marker position={departure!} icon={markerIcon}>
-              <Popup>{departureIcao}</Popup>
+            <Marker key={`${r.callsign}-dep`} position={r.departure} icon={markerIcon}>
+              <Popup>{r.callsign || "DEP"}</Popup>
             </Marker>
-            <Marker position={destination!} icon={markerIcon}>
-              <Popup>{destinationIcao}</Popup>
+            <Marker key={`${r.callsign}-dest`} position={r.destination} icon={markerIcon}>
+              <Popup>{r.callsign || "DEST"}</Popup>
             </Marker>
-            <Polyline positions={route} pathOptions={{ color: "#00d2ff", weight: 4 }} />
+            <Polyline key={`${r.callsign}-line`} positions={[r.departure, r.destination]} pathOptions={{ color: r.color, weight: 4 }} />
           </>
-        ) : null}
+        ))}
+        {allPoints.length ? <FitBounds points={allPoints} /> : null}
       </MapContainer>
-      {!hasRoute ? (
+      {!validRoutes.length ? (
         <div className="rounded-b bg-zinc-100 dark:bg-zinc-800 p-3 text-zinc-700 dark:text-zinc-200">
-          Carte mondiale affichée, mais le vol ne peut pas être tracé car les coordonnées de l’aéroport sont inconnues.
+          Carte mondiale affichée, mais aucun vol traçable (coordonnées inconnues).
         </div>
       ) : null}
     </div>
