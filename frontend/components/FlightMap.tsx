@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { Fragment, useMemo } from "react";
 import { MapContainer, TileLayer, Marker, Polyline, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -85,7 +85,7 @@ export default function FlightMap({ plans }: FlightMapProps) {
           url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
         />
         {validRoutes.map((r) => (
-          <>
+          <Fragment key={r.callsign || `${r.departure.join("-")}-${r.destination.join("-")}`}>
             <Marker key={`${r.callsign}-dep`} position={r.departure} icon={markerIcon}>
               <Popup>{r.callsign || "DEP"}</Popup>
             </Marker>
@@ -93,7 +93,7 @@ export default function FlightMap({ plans }: FlightMapProps) {
               <Popup>{r.callsign || "DEST"}</Popup>
             </Marker>
             <Polyline key={`${r.callsign}-line`} positions={[r.departure, r.destination]} pathOptions={{ color: r.color, weight: 4 }} />
-          </>
+          </Fragment>
         ))}
         {allPoints.length ? <FitBounds points={allPoints} /> : null}
       </MapContainer>
