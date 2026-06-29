@@ -50,9 +50,9 @@ def _format_fpl_line(plan: Dict, idx: int) -> str:
     Example output:
     001 FPL-LOWW01/TEST123-IS-B738/S-C/<now>-N0448F350/LFPG/DCT/-/-
     """
-    adep = _safe_get(plan, "departure", "XXXX")
+    adep = _safe_get(plan, "departure", "A1001")
     suffix = _safe_get(plan, "departure_suffix", "01")
-    callsign = _safe_get(plan, "callsign", "XXXX")
+    callsign = _safe_get(plan, "callsign", "A1001")
     fr = _safe_get(plan, "flight_rules", "I")
     ftype = _safe_get(plan, "flight_type", "S")
     aircraft = _safe_get(plan, "aircraft_type", "B738")
@@ -61,7 +61,7 @@ def _format_fpl_line(plan: Dict, idx: int) -> str:
     dep_time = _safe_get(plan, "departure_time", "<now>")
     cruise_speed = _safe_get(plan, "cruise_speed", "0448")
     fl = _safe_get(plan, "flight_level", "FL320").replace("FL", "")
-    destination = _safe_get(plan, "destination", "XXXX")
+    destination = _safe_get(plan, "destination", "A1001")
     route = _safe_get(plan, "route", "DCT")
     alternate = _safe_get(plan, "alternate", "-")
     remarks = _safe_get(plan, "remarks", "-")
