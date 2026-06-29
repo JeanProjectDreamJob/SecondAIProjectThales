@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useMemo } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { MapContainer, TileLayer, Marker, Polyline, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -28,14 +28,52 @@ const markerIcon = L.divIcon({
   iconAnchor: [8, 8],
 });
 
+function parseSpeed(plan: PlanItem): number {
+  const raw = plan.cruise_speed ?? plan.speed ?? "450";
+  const parsed = Number.parseInt(String(raw).replace(/[^0-9.]/g, ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 450;
+}
+
+function interpolatePoint(start: [number, number], end: [number, number], ratio: number): [number, number] {
+  return [
+    start[0] + (end[0] - start[0]) * ratio,
+    start[1] + (end[1] - start[1]) * ratio,
+  ];
+}
+
+function getRouteDistanceKm(start: [number, number], end: [number, number]) {
+  const toRad = (value: number) => (value * Math.PI) / 180;
+  const [lat1, lon1] = start;
+  const [lat2, lon2] = end;
+  const earthRadiusKm = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return earthRadiusKm * c;
+}
+
 interface PlanItem {
   departure?: string;
   destination?: string;
   callsign?: string;
+  speed?: string | null;
+  cruise_speed?: string | null;
 }
 
 interface FlightMapProps {
   plans?: PlanItem[] | null;
+}
+
+interface RouteItem {
+  id: string;
+  callsign?: string;
+  departure: [number, number];
+  destination: [number, number];
+  color: string;
+  speedKnots: number;
 }
 
 function FitBounds({ points }: { points: [number, number][] }) {
@@ -49,17 +87,54 @@ function FitBounds({ points }: { points: [number, number][] }) {
 const COLORS = ["#00d2ff", "#ff7a00", "#8b5cf6", "#10b981"];
 
 export default function FlightMap({ plans }: FlightMapProps) {
+  const [progressByRoute, setProgressByRoute] = useState<Record<string, number>>({});
+
   const validRoutes = useMemo(() => {
-    if (!plans) return [] as Array<{ callsign?: string; departure: [number, number]; destination: [number, number]; color: string }>;
+    if (!plans) return [] as RouteItem[];
     return plans
       .map((p, idx) => {
         const d = p.departure ? AIRPORT_COORDS[p.departure] : undefined;
         const dest = p.destination ? AIRPORT_COORDS[p.destination] : undefined;
         if (!d || !dest) return null;
-        return { callsign: p.callsign, departure: d, destination: dest, color: COLORS[idx % COLORS.length] };
+        return {
+          id: `${p.callsign || "plan"}-${idx}`,
+          callsign: p.callsign,
+          departure: d,
+          destination: dest,
+          color: COLORS[idx % COLORS.length],
+          speedKnots: parseSpeed(p),
+        };
       })
-      .filter(Boolean) as Array<{ callsign?: string; departure: [number, number]; destination: [number, number]; color: string }>;
+      .filter(Boolean) as RouteItem[];
   }, [plans]);
+
+  useEffect(() => {
+    if (!validRoutes.length) {
+      setProgressByRoute({});
+      return;
+    }
+
+    let frameId = 0;
+    const startTime = performance.now();
+
+    const animate = (now: number) => {
+      const elapsedMs = now - startTime;
+      setProgressByRoute((prev) => {
+        const next = { ...prev };
+        validRoutes.forEach((route) => {
+          const distanceKm = getRouteDistanceKm(route.departure, route.destination);
+          const durationMs = Math.max(15000, (distanceKm / (route.speedKnots * 1.852)) * 3600 * 1000);
+          const progress = (elapsedMs % durationMs) / durationMs;
+          next[route.id] = progress;
+        });
+        return next;
+      });
+      frameId = window.requestAnimationFrame(animate);
+    };
+
+    frameId = window.requestAnimationFrame(animate);
+    return () => window.cancelAnimationFrame(frameId);
+  }, [validRoutes]);
 
   const allPoints = useMemo(() => {
     const pts: [number, number][] = [];
@@ -84,17 +159,30 @@ export default function FlightMap({ plans }: FlightMapProps) {
           attribution='Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community'
           url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
         />
-        {validRoutes.map((r) => (
-          <Fragment key={r.callsign || `${r.departure.join("-")}-${r.destination.join("-")}`}>
-            <Marker key={`${r.callsign}-dep`} position={r.departure} icon={markerIcon}>
-              <Popup>{r.callsign || "DEP"}</Popup>
-            </Marker>
-            <Marker key={`${r.callsign}-dest`} position={r.destination} icon={markerIcon}>
-              <Popup>{r.callsign || "DEST"}</Popup>
-            </Marker>
-            <Polyline key={`${r.callsign}-line`} positions={[r.departure, r.destination]} pathOptions={{ color: r.color, weight: 4 }} />
-          </Fragment>
-        ))}
+        {validRoutes.map((r) => {
+          const planePosition = interpolatePoint(r.departure, r.destination, progressByRoute[r.id] ?? 0);
+          const planeIcon = L.divIcon({
+            html: `<div style="font-size: 22px; transform: rotate(${Math.atan2(r.destination[1] - r.departure[1], r.destination[0] - r.departure[0]) * (180 / Math.PI)}deg);">✈️</div>`,
+            className: "plane-marker",
+            iconSize: [24, 24],
+            iconAnchor: [12, 12],
+          });
+
+          return (
+            <Fragment key={r.id}>
+              <Marker position={r.departure} icon={markerIcon}>
+                <Popup>{r.callsign || "DEP"}</Popup>
+              </Marker>
+              <Marker position={r.destination} icon={markerIcon}>
+                <Popup>{r.callsign || "DEST"}</Popup>
+              </Marker>
+              <Polyline positions={[r.departure, r.destination]} pathOptions={{ color: r.color, weight: 4 }} />
+              <Marker position={planePosition as [number, number]} icon={planeIcon}>
+                <Popup>{r.callsign || "Vol"}</Popup>
+              </Marker>
+            </Fragment>
+          );
+        })}
         {allPoints.length ? <FitBounds points={allPoints} /> : null}
       </MapContainer>
       {!validRoutes.length ? (
