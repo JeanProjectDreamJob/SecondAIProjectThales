@@ -91,9 +91,9 @@ export default function Home() {
               <div className="mt-6">
                 <h2 className="font-medium mb-2">Plans dans ce TPL</h2>
                 <div className="space-y-2 mb-4">
-                  {plans.map((planItem) => (
-                    <div key={planItem.callsign} className="rounded border border-zinc-200 dark:border-zinc-700 p-3 bg-zinc-50 dark:bg-zinc-950">
-                      <strong>{planItem.callsign}</strong>: {planItem.departure} → {planItem.destination}
+                  {plans.map((planItem, index) => (
+                    <div key={`${planItem.callsign || "plan"}-${index}`} className="rounded border border-zinc-200 dark:border-zinc-700 p-3 bg-zinc-50 dark:bg-zinc-950">
+                      <strong>{planItem.callsign || `Plan ${index + 1}`}</strong>: {planItem.departure} → {planItem.destination}
                     </div>
                   ))}
                 </div>
