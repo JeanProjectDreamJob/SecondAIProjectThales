@@ -68,7 +68,7 @@ def _format_fpl_line(plan: Dict, idx: int) -> str:
 
     return (
         f"{idx:03d} FPL-{adep}{suffix}/{callsign}-{fr}{ftype}-{aircraft}/"
-        f"{equip}-{ssr}/{dep_time}-N{cruise_speed}F{fl}/{destination}/{route}/{alternate}/{remarks}"
+        f"{equip}-{ssr}/{dep_time}-N{cruise_speed}F{fl} {destination}/{route}/{alternate}/{remarks}"
     )
 
 
