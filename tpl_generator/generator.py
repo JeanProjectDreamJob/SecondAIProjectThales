@@ -44,11 +44,28 @@ def _plan_lines(plan: Dict) -> List[str]:
     return lines
 
 
+def _format_route_segment(plan: Dict) -> str:
+    route = _safe_get(plan, "route", "DCT")
+    charpoints = plan.get("charpoints") or plan.get("waypoints")
+
+    if isinstance(charpoints, (list, tuple, set)):
+        tokens = [str(item).strip() for item in charpoints if str(item).strip()]
+    elif charpoints is not None:
+        tokens = [str(charpoints).strip()]
+    else:
+        tokens = []
+
+    if route and str(route).strip() not in {"-", "NIL", "None", ""}:
+        tokens = [str(route).strip(), *tokens]
+
+    return " ".join(tokens) if tokens else "DCT"
+
+
 def _format_fpl_line(plan: Dict, idx: int) -> str:
     """Format a compact single-line FPL entry with defaults for missing fields.
 
     Example output:
-    001 FPL-LOWW01/TEST123-IS-B738/S-C/<now>-N0448F350/LFPG/DCT/-/-
+    001 FPL-LOWW01/TEST123-IS-B738/S-C/<now>-N0448F350 DCT NIBDA MOGOL LFML/DCT/-/-
     """
     adep = _safe_get(plan, "departure", "A1001")
     suffix = _safe_get(plan, "departure_suffix", "01")
@@ -63,12 +80,13 @@ def _format_fpl_line(plan: Dict, idx: int) -> str:
     fl = _safe_get(plan, "flight_level", "FL320").replace("FL", "")
     destination = _safe_get(plan, "destination", "A1001")
     route = _safe_get(plan, "route", "DCT")
+    route_segment = _format_route_segment(plan)
     alternate = _safe_get(plan, "alternate", "-")
     remarks = _safe_get(plan, "remarks", "-")
 
     return (
         f"{idx:03d} FPL-{adep}{suffix}/{callsign}-{fr}{ftype}-{aircraft}/"
-        f"{equip}-{ssr}/{dep_time}-N{cruise_speed}F{fl} {destination}/{route}/{alternate}/{remarks}"
+        f"{equip}-{ssr}/{dep_time}-N{cruise_speed}F{fl} {route_segment} {destination}/{route}/{alternate}/{remarks}"
     )
 
 

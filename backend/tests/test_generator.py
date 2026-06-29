@@ -31,6 +31,23 @@ def test_validate_plan_missing():
         assert "Missing required fields" in str(e)
 
 
+def test_generate_tpl_includes_charpoints_between_fl_and_destination():
+    plan = {
+        "callsign": "TEST123",
+        "departure": "LOWW",
+        "destination": "LFML",
+        "flight_level": "FL350",
+        "aircraft_type": "B738",
+        "route": "DCT",
+        "charpoints": ["NIBDA", "MOGOL"],
+        "cruise_speed": "0448",
+    }
+
+    tpl = generate_tpl(plan)
+
+    assert "N0448F350 DCT NIBDA MOGOL LFML" in tpl
+
+
 def test_fallback_parse_between_cities():
     from backend.main import _fallback_parse, _normalize_plan
 
