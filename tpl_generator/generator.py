@@ -44,22 +44,65 @@ def _plan_lines(plan: Dict) -> List[str]:
     return lines
 
 
-def generate_tpl(plan: Union[Dict, List[Dict]]) -> str:
-    """Generate a simple EUROCONTROL-like TPL content from one or more structured plans.
+def _format_fpl_line(plan: Dict, idx: int) -> str:
+    """Format a compact single-line FPL entry inspired by the example.
 
-    The output follows a compact, line-based representation containing
-    required flight identifiers. This generator focuses on structure and
-    validation for MVP; further EUROCONTROL-specific rules can be added.
+    Example output:
+    001 FPL-LOWW01/AF100-IS-F2TH/M-S/C-LOKT<now>-N0448F320
     """
+    adep = _safe_get(plan, "departure")
+    suffix = _safe_get(plan, "departure_suffix", "01")
+    callsign = _safe_get(plan, "callsign", "-")
+    fr = _safe_get(plan, "flight_rules", "I")
+    ftype = _safe_get(plan, "flight_type", "-")
+    aircraft = _safe_get(plan, "aircraft_type", "-")
+    equip = _safe_get(plan, "equipment", "S")
+    ssr = _safe_get(plan, "ssr", "-")
+    dep_time = _safe_get(plan, "departure_time", "<now>")
+    cruise_speed = _safe_get(plan, "cruise_speed", "0448")
+    fl = _safe_get(plan, "flight_level", "FL320").replace("FL", "")
+
+    # Build segments similar to the example
+    left = f"{adep}{suffix}/{callsign}"
+    middle = f"{fr}{ftype}-{aircraft}/{equip}-{ssr}"
+    right = f"{dep_time}-N{cruise_speed}F{fl}"
+    return f"{idx:03d} FPL-{left}-{middle}-{right}"
+
+
+def generate_tpl(plan: Union[Dict, List[Dict]]) -> str:
+    """Generate a compact file containing one FPL line per plan.
+
+    The file starts with an optional operator code (from first plan `operator`)
+    or defaults to `AF` on the first line, then an empty line, then one
+    FPL line per plan and optional DOF lines when `departure_date` is set.
+    """
+    lines: List[str] = []
+    operator = None
+    if isinstance(plan, list) and plan:
+        operator = plan[0].get("operator")
+    elif isinstance(plan, dict):
+        operator = plan.get("operator")
+
+    if not operator:
+        operator = "AF"
+
+    lines.append(operator)
+    lines.append("")
+
     if isinstance(plan, list):
-        lines = ["TPL-FILE: EUROCONTROL-MVP"]
-        for item in plan:
-            lines.extend(_plan_lines(item))
+        for idx, item in enumerate(plan, start=1):
+            lines.append(_format_fpl_line(item, idx))
+            dep_date = item.get("departure_date")
+            if dep_date:
+                lines.append(f"DOF/{dep_date}")
             lines.append("")
         return "\n".join(lines).strip()
 
-    lines = ["TPL-FILE: EUROCONTROL-MVP"]
-    lines.extend(_plan_lines(plan))
+    # single plan
+    lines.append(_format_fpl_line(plan, 1))
+    dep_date = plan.get("departure_date")
+    if dep_date:
+        lines.append(f"DOF/{dep_date}")
     return "\n".join(lines)
 
 

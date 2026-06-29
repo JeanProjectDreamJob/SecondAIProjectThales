@@ -4,17 +4,20 @@ from tpl_generator import generate_tpl, validate_plan
 def test_generate_tpl_basic():
     plan = {
         "callsign": "TEST123",
-        "departure": "Paris",
-        "destination": "Singapore",
+        "departure": "LOWW",
+        "destination": "LFMN",
         "departure_date": "2026-06-28",
         "flight_level": "FL350",
         "aircraft_type": "B738",
-        "route": "DCT"
+        "route": "DCT",
+        "cruise_speed": "0448",
+        "operator": "AF"
     }
     tpl = generate_tpl(plan)
-    assert "7: TEST123" in tpl
-    assert "13: Paris" in tpl or "13: Paris/" in tpl
-    assert "16: Singapore" in tpl or "16: Singapore/" in tpl
+    assert tpl.splitlines()[0] == "AF"
+    assert "FPL-LOWW" in tpl
+    assert "TEST123" in tpl
+    assert "DOF/2026-06-28" in tpl
 
 
 def test_validate_plan_missing():
@@ -71,8 +74,8 @@ def test_generate_tpl_multiple_plans():
     ]
     tpl = generate_tpl(plans)
 
-    assert tpl.count("7:") == 2
-    assert "13: LOWW" in tpl or "13: LOWW/" in tpl
-    assert "16: LFPG" in tpl or "16: LFPG/" in tpl
-    assert "13: WSSS" in tpl or "13: WSSS/" in tpl
-    assert "16: LFMN" in tpl or "16: LFMN/" in tpl
+    assert tpl.count("FPL-") == 2
+    assert "FPL-LOWW" in tpl
+    assert "FPL-WSSS" in tpl
+    # two DOF lines present (one per plan)
+    assert tpl.count("DOF/") == 2
