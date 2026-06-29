@@ -78,9 +78,19 @@ interface RouteItem {
 
 function FitBounds({ points }: { points: [number, number][] }) {
   const map = useMap();
-  if (!points || points.length === 0) return null;
-  const bounds = L.latLngBounds(points as any);
-  map.fitBounds(bounds, { padding: [40, 40] });
+
+  useEffect(() => {
+    if (!points || points.length === 0) return;
+
+    const bounds = L.latLngBounds(points as any);
+    const id = window.setTimeout(() => {
+      map.fitBounds(bounds, { padding: [60, 60], maxZoom: 4 });
+      map.invalidateSize();
+    }, 0);
+
+    return () => window.clearTimeout(id);
+  }, [map, points]);
+
   return null;
 }
 
