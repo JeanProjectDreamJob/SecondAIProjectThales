@@ -17,6 +17,8 @@ def test_generate_tpl_basic():
     assert tpl.splitlines()[0] == "AF"
     assert "FPL-LOWW" in tpl
     assert "TEST123" in tpl
+    assert "B738" in tpl
+    assert "DCT" in tpl
     assert "DOF/2026-06-28" in tpl
 
 

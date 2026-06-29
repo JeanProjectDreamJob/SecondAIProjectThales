@@ -45,28 +45,31 @@ def _plan_lines(plan: Dict) -> List[str]:
 
 
 def _format_fpl_line(plan: Dict, idx: int) -> str:
-    """Format a compact single-line FPL entry inspired by the example.
+    """Format a compact single-line FPL entry with defaults for missing fields.
 
     Example output:
-    001 FPL-LOWW01/AF100-IS-F2TH/M-S/C-LOKT<now>-N0448F320
+    001 FPL-LOWW01/TEST123-IS-B738/S-C/<now>-N0448F350/LFPG/DCT/-/-
     """
-    adep = _safe_get(plan, "departure")
+    adep = _safe_get(plan, "departure", "XXXX")
     suffix = _safe_get(plan, "departure_suffix", "01")
-    callsign = _safe_get(plan, "callsign", "-")
+    callsign = _safe_get(plan, "callsign", "XXXX")
     fr = _safe_get(plan, "flight_rules", "I")
-    ftype = _safe_get(plan, "flight_type", "-")
-    aircraft = _safe_get(plan, "aircraft_type", "-")
+    ftype = _safe_get(plan, "flight_type", "S")
+    aircraft = _safe_get(plan, "aircraft_type", "B738")
     equip = _safe_get(plan, "equipment", "S")
-    ssr = _safe_get(plan, "ssr", "-")
+    ssr = _safe_get(plan, "ssr", "C")
     dep_time = _safe_get(plan, "departure_time", "<now>")
     cruise_speed = _safe_get(plan, "cruise_speed", "0448")
     fl = _safe_get(plan, "flight_level", "FL320").replace("FL", "")
+    destination = _safe_get(plan, "destination", "XXXX")
+    route = _safe_get(plan, "route", "DCT")
+    alternate = _safe_get(plan, "alternate", "-")
+    remarks = _safe_get(plan, "remarks", "-")
 
-    # Build segments similar to the example
-    left = f"{adep}{suffix}/{callsign}"
-    middle = f"{fr}{ftype}-{aircraft}/{equip}-{ssr}"
-    right = f"{dep_time}-N{cruise_speed}F{fl}"
-    return f"{idx:03d} FPL-{left}-{middle}-{right}"
+    return (
+        f"{idx:03d} FPL-{adep}{suffix}/{callsign}-{fr}{ftype}-{aircraft}/"
+        f"{equip}-{ssr}/{dep_time}-N{cruise_speed}F{fl}/{destination}/{route}/{alternate}/{remarks}"
+    )
 
 
 def generate_tpl(plan: Union[Dict, List[Dict]]) -> str:
