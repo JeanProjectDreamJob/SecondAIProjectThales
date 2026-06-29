@@ -51,6 +51,14 @@ def test_empty_prompt_uses_default_sample():
     assert plan["destination"] == "LFPG"
 
 
+def test_fallback_parse_uses_default_callsign():
+    from backend.main import _fallback_parse
+
+    plan = _fallback_parse("flight from Paris to Singapore")
+
+    assert plan["callsign"] == "A1001"
+
+
 def test_generate_tpl_multiple_plans():
     plans = [
         {

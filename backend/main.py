@@ -151,7 +151,7 @@ def _fallback_parse(prompt: str) -> dict:
 
 	# simple defaults
 	if not out["callsign"]:
-		out["callsign"] = f"AUTO{abs(hash(prompt)) % 10000}"
+		out["callsign"] = "A1001"
 	if not out["departure"]:
 		out["departure"] = "UNKNOWN"
 	if not out["destination"]:
