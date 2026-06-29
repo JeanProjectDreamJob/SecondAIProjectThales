@@ -12,9 +12,9 @@ def test_generate_tpl_basic():
         "route": "DCT"
     }
     tpl = generate_tpl(plan)
-    assert "ACID: TEST123" in tpl
-    assert "DEP: Paris" in tpl
-    assert "DEST: Singapore" in tpl
+    assert "7: TEST123" in tpl
+    assert "13: Paris" in tpl or "13: Paris/" in tpl
+    assert "16: Singapore" in tpl or "16: Singapore/" in tpl
 
 
 def test_validate_plan_missing():
@@ -71,8 +71,8 @@ def test_generate_tpl_multiple_plans():
     ]
     tpl = generate_tpl(plans)
 
-    assert tpl.count("ACID:") == 2
-    assert "ADEP: LOWW" in tpl
-    assert "ADES: LFPG" in tpl
-    assert "ADEP: WSSS" in tpl
-    assert "ADES: LFMN" in tpl
+    assert tpl.count("7:") == 2
+    assert "13: LOWW" in tpl or "13: LOWW/" in tpl
+    assert "16: LFPG" in tpl or "16: LFPG/" in tpl
+    assert "13: WSSS" in tpl or "13: WSSS/" in tpl
+    assert "16: LFMN" in tpl or "16: LFMN/" in tpl

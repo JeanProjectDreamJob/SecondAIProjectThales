@@ -15,19 +15,30 @@ def _plan_lines(plan: Dict) -> List[str]:
     aircraft = _safe_get(plan, "aircraft_type")
     route = _safe_get(plan, "route", "NIL")
     speed = _safe_get(plan, "speed", "N/A")
-
-    lines = []
-    lines.append(f"ACID: {callsign}")
-    lines.append(f"ADEP: {dep}")
-    lines.append(f"ADES: {dest}")
-    lines.append(f"DEP: {dep}")
-    lines.append(f"DEST: {dest}")
-    lines.append(f"DEP_DATE: {dep_date}")
-    lines.append(f"FLT_LEVEL: {flight_level}")
-    lines.append(f"AC_TYPE: {aircraft}")
-    lines.append(f"SPEED: {speed}")
-    lines.append("ROUTE:")
-    lines.append(route)
+    # Produce a numbered ICAO-like flight plan block following common field ordering
+    # Field numbers follow the ICAO flight plan form for clarity (7,8,9,10,13,15,16,18)
+    lines: List[str] = []
+    lines.append(f"7: {callsign}")
+    # 8: flight rules / type of flight (default to I / -)
+    fr = _safe_get(plan, "flight_rules", "I")
+    ftype = _safe_get(plan, "flight_type", "-")
+    lines.append(f"8: {fr} {ftype}")
+    # 9: number/type/wake (we only know aircraft type)
+    lines.append(f"9: -/{aircraft}")
+    # 10: equipment (use supplied or default to S/C)
+    equip = _safe_get(plan, "equipment", "S")
+    lines.append(f"10: {equip}")
+    # 13: departure aerodrome and time
+    dep_time = _safe_get(plan, "departure_time", dep_date)
+    lines.append(f"13: {dep}/{dep_time}")
+    # 15: speed, flight level and route
+    lines.append(f"15: {speed} {flight_level} {route}")
+    # 16: destination and estimated elapsed time
+    eet = _safe_get(plan, "eet", "-")
+    lines.append(f"16: {dest}/{eet}")
+    # 18: other information (free text)
+    other = _safe_get(plan, "other", "-")
+    lines.append(f"18: {other}")
     lines.append("")
     lines.append("--END--")
     return lines
