@@ -65,7 +65,7 @@ def _format_fpl_line(plan: Dict, idx: int) -> str:
     """Format a compact single-line FPL entry with defaults for missing fields.
 
     Example output:
-    001 FPL-LOWW01/TEST123-IS-B738/S-C/<now>-N0448F350 DCT NIBDA MOGOL LFML/DCT/-/-
+    AF 001 FPL-LOWW01/TEST123-IS-B738/S-C/<now>-N0448F350 DCT NIBDA MOGOL LFML/DCT/-/-
     """
     adep = _safe_get(plan, "departure", "A1001")
     suffix = _safe_get(plan, "departure_suffix", "01")
@@ -85,7 +85,7 @@ def _format_fpl_line(plan: Dict, idx: int) -> str:
     remarks = _safe_get(plan, "remarks", "-")
 
     return (
-        f"{idx:03d} FPL-{adep}{suffix}/{callsign}-{fr}{ftype}-{aircraft}/"
+        f"AF {idx:03d} FPL-{adep}{suffix}/{callsign}-{fr}{ftype}-{aircraft}/"
         f"{equip}-{ssr}/{dep_time}-N{cruise_speed}F{fl} {route_segment} {destination}/{route}/{alternate}/{remarks}"
     )
 
@@ -98,17 +98,6 @@ def generate_tpl(plan: Union[Dict, List[Dict]]) -> str:
     FPL line per plan and optional DOF lines when `departure_date` is set.
     """
     lines: List[str] = []
-    operator = None
-    if isinstance(plan, list) and plan:
-        operator = plan[0].get("operator")
-    elif isinstance(plan, dict):
-        operator = plan.get("operator")
-
-    if not operator:
-        operator = "AF"
-
-    lines.append(operator)
-    lines.append("")
 
     if isinstance(plan, list):
         for idx, item in enumerate(plan, start=1):

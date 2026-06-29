@@ -14,7 +14,7 @@ def test_generate_tpl_basic():
         "operator": "AF"
     }
     tpl = generate_tpl(plan)
-    assert tpl.splitlines()[0] == "AF"
+    assert tpl.splitlines()[0] == "AF 001 FPL-LOWW01/TEST123-IS-B738/S-C/<now>-N0448F350 DCT NIBDA MOGOL LFMN/DCT/-/-"
     assert "FPL-LOWW" in tpl
     assert "TEST123" in tpl
     assert "B738" in tpl
