@@ -73,6 +73,12 @@ ICAO_AIRPORTS = {
 	"cape town": "FACT",
 }
 
+AVOID_REGION_CHARPOINTS = {
+	"iran": ["NIBDA", "MOGOL"],
+	"iraq": ["NIBDA", "MOGOL"],
+	"ukraine": ["NIBDA", "MOGOL"],
+}
+
 
 def _to_icao_code(value: str | None) -> str | None:
 	if not value:
@@ -118,6 +124,22 @@ def _normalize_plan(plan: dict | list[dict]) -> dict | list[dict]:
 	return out
 
 
+def _extract_charpoints(prompt: str) -> list[str] | None:
+	text = prompt.lower()
+	charpoints_match = re.search(r"(?:charpoints?|waypoints?)\s+([a-z0-9,\s-]+)", text, re.IGNORECASE)
+	if charpoints_match:
+		tokens = [token.upper() for token in re.split(r"[\s,]+", charpoints_match.group(1)) if token]
+		if tokens:
+			return tokens
+
+	for region, waypoints in AVOID_REGION_CHARPOINTS.items():
+		avoid_pattern = re.search(rf"\b(?:avoid|bypass|detour|do not pass|cannot pass|can't pass|not over|not above|around)\b.*\b{re.escape(region)}\b", text)
+		if avoid_pattern:
+			return waypoints
+
+	return None
+
+
 def _fallback_parse(prompt: str) -> dict:
 	"""Very small heuristic parser for prompts like:
 	"Flight from Paris to Singapore at FL350"
@@ -131,6 +153,7 @@ def _fallback_parse(prompt: str) -> dict:
 		"route": None,
 		"departure_date": None,
 		"speed": None,
+		"charpoints": None,
 	}
 	prompt = _normalize_prompt(prompt)
 	text = prompt.lower()
@@ -148,6 +171,10 @@ def _fallback_parse(prompt: str) -> dict:
 	m3 = re.search(r"callsign\s+([A-Za-z0-9-]+)", text)
 	if m3:
 		out["callsign"] = m3.group(1).upper()
+
+	charpoints = _extract_charpoints(prompt)
+	if charpoints:
+		out["charpoints"] = charpoints
 
 	# simple defaults
 	if not out["callsign"]:
@@ -167,7 +194,8 @@ def _llm_parse(prompt: str) -> dict:
 	openai.api_key = api_key
 	system = (
 		"You are a parser that converts a single-line natural language flight request into a JSON object "
-		"with fields: callsign, departure, destination, flight_level, aircraft_type, route, departure_date, speed. "
+		"with fields: callsign, departure, destination, flight_level, aircraft_type, route, departure_date, speed, charpoints. "
+		"If the request mentions avoiding a region or making a detour, include a charpoints array with suitable waypoints. "
 		"Return only valid JSON without extra commentary."
 	)
 	try:

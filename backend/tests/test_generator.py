@@ -63,6 +63,15 @@ def test_generate_tpl_uses_default_charpoints_when_none_are_provided():
     assert "N0448F350 DCT NIBDA MOGOL LFML" in tpl
 
 
+def test_fallback_parse_adds_charpoints_for_avoid_iran():
+    from backend.main import _fallback_parse, _normalize_plan
+
+    plan = _fallback_parse("Flight from Paris to Singapore at FL350, avoid Iran")
+    plan = _normalize_plan(plan)
+
+    assert plan["charpoints"] == ["NIBDA", "MOGOL"]
+
+
 def test_fallback_parse_between_cities():
     from backend.main import _fallback_parse, _normalize_plan
 
