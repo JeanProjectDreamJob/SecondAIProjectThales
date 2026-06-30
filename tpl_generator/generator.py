@@ -53,7 +53,7 @@ def _format_route_segment(plan: Dict) -> str:
     elif charpoints is not None:
         tokens = [str(charpoints).strip()]
     else:
-        tokens = ["NIBDA", "MOGOL"]
+        tokens = []
 
     if route and str(route).strip() not in {"-", "NIL", "None", ""}:
         tokens = [str(route).strip(), *tokens]

@@ -14,7 +14,7 @@ def test_generate_tpl_basic():
         "operator": "AF"
     }
     tpl = generate_tpl(plan)
-    assert tpl.splitlines()[0] == "AF 001 FPL-LOWW01/TEST123-IS-B738/S-C/<now>-N0448F350 DCT NIBDA MOGOL LFMN/DCT/-/-"
+    assert tpl.splitlines()[0] == "AF 001 FPL-LOWW01/TEST123-IS-B738/S-C/<now>-N0448F350 DCT LFMN/DCT/-/-"
     assert "FPL-LOWW" in tpl
     assert "TEST123" in tpl
     assert "B738" in tpl
@@ -31,24 +31,7 @@ def test_validate_plan_missing():
         assert "Missing required fields" in str(e)
 
 
-def test_generate_tpl_includes_charpoints_between_fl_and_destination():
-    plan = {
-        "callsign": "TEST123",
-        "departure": "LOWW",
-        "destination": "LFML",
-        "flight_level": "FL350",
-        "aircraft_type": "B738",
-        "route": "DCT",
-        "charpoints": ["NIBDA", "MOGOL"],
-        "cruise_speed": "0448",
-    }
-
-    tpl = generate_tpl(plan)
-
-    assert "N0448F350 DCT NIBDA MOGOL LFML" in tpl
-
-
-def test_generate_tpl_uses_default_charpoints_when_none_are_provided():
+def test_generate_tpl_no_charpoints():
     plan = {
         "callsign": "TEST456",
         "departure": "LOWW",
@@ -57,19 +40,8 @@ def test_generate_tpl_uses_default_charpoints_when_none_are_provided():
         "aircraft_type": "B738",
         "cruise_speed": "0448",
     }
-
     tpl = generate_tpl(plan)
-
-    assert "N0448F350 DCT NIBDA MOGOL LFML" in tpl
-
-
-def test_fallback_parse_adds_charpoints_for_avoid_iran():
-    from backend.main import _fallback_parse, _normalize_plan
-
-    plan = _fallback_parse("Flight from Paris to Singapore at FL350, avoid Iran")
-    plan = _normalize_plan(plan)
-
-    assert plan["charpoints"] == ["NIBDA", "MOGOL"]
+    assert "N0448F350 DCT LFML" in tpl
 
 
 def test_fallback_parse_between_cities():
@@ -92,12 +64,12 @@ def test_empty_prompt_uses_default_sample():
     assert plan["destination"] == "LFPG"
 
 
-def test_fallback_parse_uses_default_callsign():
+def test_fallback_parse_no_callsign_when_not_specified():
     from backend.main import _fallback_parse
 
     plan = _fallback_parse("flight from Paris to Singapore")
 
-    assert plan["callsign"] == "A1001"
+    assert not plan["callsign"]
 
 
 def test_generate_tpl_multiple_plans():
@@ -128,5 +100,14 @@ def test_generate_tpl_multiple_plans():
     assert tpl.count("FPL-") == 2
     assert "FPL-LOWW" in tpl
     assert "FPL-WSSS" in tpl
-    # two DOF lines present (one per plan)
     assert tpl.count("DOF/") == 2
+
+
+def test_fallback_parse_french_cities():
+    from backend.main import _fallback_parse, _normalize_plan
+
+    plan = _fallback_parse("Vol de Singapour à Marseille")
+    plan = _normalize_plan(plan)
+
+    assert plan["departure"] == "WSSS"
+    assert plan["destination"] == "LFML"
