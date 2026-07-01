@@ -127,6 +127,8 @@ export default function Home() {
   const [isMtcd, setIsMtcd] = useState(false);
   const [conflictPoint, setConflictPoint] = useState<[number, number] | null>(null);
   const [insertedByPlan, setInsertedByPlan] = useState<Record<number, string[]>>({});
+  const [wpInputByPlan, setWpInputByPlan] = useState<Record<number, string>>({});
+  const [extraCoordsLookup, setExtraCoordsLookup] = useState<Record<string,[number,number]>>({});
   const [view3d, setView3d] = useState(false);
   const insertedWaypoints = useMemo(() => {
     const s = new Set<string>();
@@ -139,6 +141,8 @@ export default function Home() {
     setError(null);
     setTpl(null);
     setInsertedByPlan({});
+    setExtraCoordsLookup({});
+    setWpInputByPlan({});
     try {
       const res = await fetch("/api/generate-tpl", {
         method: "POST",
@@ -166,24 +170,44 @@ export default function Home() {
     void generate(DEFAULT_PROMPT);
   }, []);
 
-  function handleWaypointInserted(planIdx: number, icao: string) {
-    if (!tpl || !plans) return;
+  function handleWaypointInserted(planIdx: number, icao: string, insertAtRouteIdx?: number, coord?: [number,number]) {
+    if (!plans) return;
     const plan = plans[planIdx];
     if (!plan) return;
     const dest = plan.destination;
     if (!dest) return;
-    const lines = tpl.split("\n");
-    let fplCount = 0;
-    const updated = lines.map(line => {
-      if (!line.includes("FPL-")) return line;
-      if (fplCount === planIdx) {
+
+    // Update TPL text
+    if (tpl) {
+      const lines = tpl.split("\n");
+      let fplCount = 0;
+      const updatedTpl = lines.map(line => {
+        if (!line.includes("FPL-")) return line;
+        if (fplCount === planIdx) { fplCount++; return line.replace(new RegExp(`(\\s)(${dest})(/)`), `$1${icao} $2$3`); }
         fplCount++;
-        return line.replace(new RegExp(`(\\s)(${dest})(/)`), `$1${icao} $2$3`);
-      }
-      fplCount++;
-      return line;
+        return line;
+      });
+      setTpl(updatedTpl.join("\n"));
+    }
+
+    // Update plans.route — single source of truth for both 2D and 3D
+    setPlans(prev => {
+      if (!prev) return prev;
+      const next = [...prev];
+      const tokens = (next[planIdx].route ?? "").split(/\s+/).filter(Boolean);
+      const pos = (insertAtRouteIdx !== undefined && insertAtRouteIdx >= 0)
+        ? Math.min(insertAtRouteIdx, tokens.length)
+        : tokens.length;
+      const newTokens = [...tokens.slice(0, pos), icao, ...tokens.slice(pos)];
+      next[planIdx] = { ...next[planIdx], route: newTokens.join(" ") };
+      return next;
     });
-    setTpl(updated.join("\n"));
+
+    // Register coordinate so lookupCoord works in both views even for points not in static tables
+    if (coord && icao) {
+      setExtraCoordsLookup(prev => ({ ...prev, [icao]: coord }));
+    }
+
     setInsertedByPlan(prev => ({ ...prev, [planIdx]: [...(prev[planIdx] ?? []), icao] }));
     setIsMtcd(false);
     setConflictPoint(null);
@@ -393,6 +417,24 @@ export default function Home() {
                         )}
                         <span style={{ color: th.cardSub }}>→</span>
                         <span style={{ color: th.cardSub }}>{planItem.destination}</span>
+                        {/* ── inline waypoint text input ── */}
+                        <form style={{ display:"flex", alignItems:"center", gap:4, marginTop:4, width:"100%" }}
+                          onSubmit={e => {
+                            e.preventDefault();
+                            const icao = (wpInputByPlan[index] ?? "").trim().toUpperCase();
+                            if (!icao) return;
+                            handleWaypointInserted(index, icao);
+                            setWpInputByPlan(prev => ({ ...prev, [index]: "" }));
+                          }}>
+                          <input
+                            value={wpInputByPlan[index] ?? ""}
+                            onChange={e => setWpInputByPlan(prev => ({ ...prev, [index]: e.target.value.toUpperCase() }))}
+                            placeholder="+ waypoint"
+                            maxLength={6}
+                            style={{ width:64, fontSize:10, padding:"2px 6px", borderRadius:4, border:`1px solid ${th.inputBorder}`, background:th.inputBg, color:th.inputText, outline:"none" }}
+                          />
+                          <button type="submit" style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:"rgba(99,130,180,0.2)", color:th.cardSub, border:`1px solid ${th.inputBorder}`, cursor:"pointer" }}>+</button>
+                        </form>
                       </div>
                     );
                   })}
@@ -431,8 +473,8 @@ export default function Home() {
                 )}
 
                 {view3d
-                  ? <Globe3D plans={plans} lang={lang} onWaypointInserted={handleWaypointInserted} conflictPoint={conflictPoint} isMtcdGlobal={isMtcd} />
-                  : <FlightMap plans={plans} onWaypointInserted={handleWaypointInserted} conflictPoint={conflictPoint} lang={lang} />
+                  ? <Globe3D plans={plans} lang={lang} onWaypointInserted={handleWaypointInserted} conflictPoint={conflictPoint} isMtcdGlobal={isMtcd} extraCoordsLookup={extraCoordsLookup} />
+                  : <FlightMap plans={plans} onWaypointInserted={handleWaypointInserted} conflictPoint={conflictPoint} lang={lang} extraCoordsLookup={extraCoordsLookup} />
                 }
               </div>
             ) : null}

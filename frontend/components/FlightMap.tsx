@@ -134,8 +134,8 @@ const AIRPORT_COORDS: Record<string, [number, number]> = {
 
 const markerIcon = L.divIcon({
   className: "custom-map-marker",
-  iconSize: [16, 16],
-  iconAnchor: [8, 8],
+  iconSize: [8, 8],
+  iconAnchor: [4, 4],
 });
 
 
@@ -259,8 +259,9 @@ const WAYPOINT_COORDS: Record<string, [number, number]> = {
   CHENG:[30.5,104.0],WUHAN:[30.6,114.1],BEIJK:[39.9,116.4],
 };
 
+let _extraCoordsLookup: Record<string,[number,number]> = {};
 function lookupCoord(name: string): [number, number] | undefined {
-  return AIRPORT_COORDS[name] ?? WAYPOINT_COORDS[name];
+  return _extraCoordsLookup[name] ?? AIRPORT_COORDS[name] ?? WAYPOINT_COORDS[name];
 }
 
 interface PlanItem {
@@ -278,9 +279,10 @@ interface PlanItem {
 
 interface FlightMapProps {
   plans?: PlanItem[] | null;
-  onWaypointInserted?: (planIdx: number, icao: string) => void;
+  onWaypointInserted?: (planIdx: number, icao: string, insertAtRouteIdx: number, coord: [number,number]) => void;
   conflictPoint?: [number, number] | null;
   lang?: string;
+  extraCoordsLookup?: Record<string,[number,number]>;
 }
 
 type MapStyle = "satellite" | "dark" | "blanc";
@@ -475,7 +477,8 @@ function FitBounds({ points }: { points: [number, number][] }) {
 
 const COLORS = ["#00d2ff", "#ff7a00", "#8b5cf6", "#10b981"];
 
-export default function FlightMap({ plans, onWaypointInserted, conflictPoint, lang = "en" }: FlightMapProps) {
+export default function FlightMap({ plans, onWaypointInserted, conflictPoint, lang = "en", extraCoordsLookup = {} }: FlightMapProps) {
+  _extraCoordsLookup = extraCoordsLookup;
   const speedI18n = SPEED_PANEL_I18N[lang] ?? SPEED_PANEL_I18N.en;
   const [progressByRoute, setProgressByRoute] = useState<Record<string, number>>({});
   const [speedMultiplierByRoute, setSpeedMultiplierByRoute] = useState<Record<string, number>>({});
@@ -1014,14 +1017,10 @@ export default function FlightMap({ plans, onWaypointInserted, conflictPoint, la
             const ds = dragStateRef.current;
             if (!ds) return;
             const icao = coordToIcaoRef.current.get(`${ds.point[0]},${ds.point[1]}`) ?? "";
-            setExtraWaypointsByRoute(prev => {
-              const current = prev[ds.routeId] || [];
-              const newWps = [...current.slice(0, ds.insertIdx - 1), ds.point, ...current.slice(ds.insertIdx - 1)];
-              return { ...prev, [ds.routeId]: newWps };
-            });
             if (icao && onWaypointInserted) {
               const planIdx = validRoutes.findIndex(r => r.id === ds.routeId);
-              if (planIdx >= 0) onWaypointInserted(planIdx, icao);
+              // Route update goes through plans.route (source of truth); no local extraWps needed
+              if (planIdx >= 0) onWaypointInserted(planIdx, icao, ds.insertIdx - 1, ds.point);
             }
             setDragState(null);
           }}

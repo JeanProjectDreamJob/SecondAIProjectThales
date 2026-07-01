@@ -59,8 +59,9 @@ const WP: Record<string, [number, number]> = {
   MILPA:[45.483,11.6],DOMOK:[44.967,13.0],KOTOR:[44.983,13.483],RESMI:[47.967,15.633],
 };
 
+let _extraCoordsLookup: Record<string,[number,number]> = {};
 function lookupCoord(name: string): [number, number] | undefined {
-  return APT[name] ?? WP[name];
+  return _extraCoordsLookup[name] ?? APT[name] ?? WP[name];
 }
 
 // ── I18N / CONSTANTS ─────────────────────────────────────────────────────────
@@ -261,12 +262,30 @@ function CountryBorders() {
 }
 
 // ── FIR BOUNDARIES ───────────────────────────────────────────────────────────
+// Merged into a single LineSegments = 1 draw call (vs 1000+ individual Line objects)
+const FIR_VERT = `
+  varying vec3 vWorldNorm;
+  void main() {
+    vWorldNorm = normalize((modelMatrix * vec4(position, 1.0)).xyz);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+const FIR_FRAG = `
+  uniform vec3 uCamPos;
+  varying vec3 vWorldNorm;
+  void main() {
+    if (dot(vWorldNorm, normalize(uCamPos)) < 0.0) discard;
+    gl_FragColor = vec4(0.302, 0.871, 0.502, 0.85);
+  }
+`;
+
 function FirBoundaries3D() {
-  const [lines, setLines] = useState<THREE.Line[]>([]);
+  const matRef = useRef<THREE.ShaderMaterial | null>(null);
+  const [obj, setObj] = useState<THREE.LineSegments | null>(null);
+
   useEffect(() => {
     fetch("/fir-boundaries.geojson").then(r => r.json()).then((d: any) => {
-      const mat = new THREE.LineBasicMaterial({ color: "#4ade80", transparent: true, opacity: 0.65 });
-      const out: THREE.Line[] = [];
+      const positions: number[] = [];
       (d.features ?? []).forEach((f: any) => {
         if (!f.geometry) return;
         const rings: number[][][] =
@@ -275,35 +294,100 @@ function FirBoundaries3D() {
           : [];
         rings.forEach(ring => {
           try {
-            const pts = ringPts(ring, 1.003);
-            if (pts.length < 2) return;
-            out.push(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat));
+            if (ring.length < 2) return;
+            for (let i = 0; i < ring.length - 1; i++) {
+              const [lon1, lat1] = ring[i];
+              const [lon2, lat2] = ring[i + 1];
+              const a = latLonToVec3(lat1, lon1, 1.002);
+              const b = latLonToVec3(lat2, lon2, 1.002);
+              positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+            }
           } catch {}
         });
       });
-      setLines(out);
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      const mat = new THREE.ShaderMaterial({
+        uniforms: { uCamPos: { value: new THREE.Vector3() } },
+        vertexShader: FIR_VERT,
+        fragmentShader: FIR_FRAG,
+        transparent: true,
+        depthWrite: false,
+        depthTest: false,
+      });
+      matRef.current = mat;
+      const ls = new THREE.LineSegments(geo, mat);
+      ls.renderOrder = 5;
+      setObj(ls);
     }).catch(() => {});
   }, []);
-  return <>{lines.map((l, i) => <primitive key={`fir-${i}`} object={l} />)}</>;
+
+  useFrame(({ camera }) => {
+    if (matRef.current) matRef.current.uniforms.uCamPos.value.copy(camera.position);
+  });
+
+  return obj ? <primitive object={obj} /> : null;
 }
 
-// ── SUA RINGS ─────────────────────────────────────────────────────────────────
+// ── SUA ZONES ─────────────────────────────────────────────────────────────────
+// Draped on the globe surface (r=1.0015) — ring outline + filled geodesic cap
 function SuaRing({ zone }: { zone: SuaZone }) {
-  const obj = useMemo(() => {
+  const objs = useMemo(() => {
     const color = zone.type === "P" ? "#ef4444" : zone.type === "R" ? "#f97316" : "#eab308";
-    const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.55 });
-    const R = 6371, ar = (zone.radius_km/3)/R, N = 64;
-    const pts: THREE.Vector3[] = [];
+    const R_GLOBE = 1.0015; // just above globe surface, below country borders (1.001)
+    const R_EARTH = 6371;
+    const ar = zone.radius_km / R_EARTH;
+    const N = 72;
+    const lat1 = zone.lat * Math.PI / 180;
+
+    // Geodesic ring points
+    const outer: THREE.Vector3[] = [];
     for (let i = 0; i <= N; i++) {
-      const b = (i/N)*2*Math.PI;
-      const lat1 = zone.lat * Math.PI/180;
-      const lat2r = Math.asin(Math.sin(lat1)*Math.cos(ar) + Math.cos(lat1)*Math.sin(ar)*Math.cos(b));
-      const lon2 = zone.lon + Math.atan2(Math.sin(b)*Math.sin(ar)*Math.cos(lat1), Math.cos(ar)-Math.sin(lat1)*Math.sin(lat2r))*180/Math.PI;
-      pts.push(latLonToVec3(lat2r*180/Math.PI, lon2, 1.002));
+      const b = (i / N) * 2 * Math.PI;
+      const lat2r = Math.asin(
+        Math.sin(lat1) * Math.cos(ar) + Math.cos(lat1) * Math.sin(ar) * Math.cos(b)
+      );
+      const lon2 = zone.lon + Math.atan2(
+        Math.sin(b) * Math.sin(ar) * Math.cos(lat1),
+        Math.cos(ar) - Math.sin(lat1) * Math.sin(lat2r)
+      ) * 180 / Math.PI;
+      outer.push(latLonToVec3(lat2r * 180 / Math.PI, lon2, R_GLOBE));
     }
-    return new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat);
+
+    // ── Filled geodesic cap: use two layers (DoubleSide + depthTest off to force visibility)
+    const center = latLonToVec3(zone.lat, zone.lon, R_GLOBE);
+    const positions: number[] = [center.x, center.y, center.z];
+    outer.forEach(v => positions.push(v.x, v.y, v.z));
+
+    const indices: number[] = [];
+    for (let i = 0; i < N; i++) indices.push(0, i + 1, i + 2);
+
+    const fillGeo = new THREE.BufferGeometry();
+    fillGeo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    fillGeo.setIndex(indices);
+    fillGeo.computeVertexNormals();
+
+    const fillMat = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.22,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      depthTest: false,
+    });
+    const fillMesh = new THREE.Mesh(fillGeo, fillMat);
+    fillMesh.renderOrder = 1;
+
+    // ── Ring outline at the boundary
+    const ringGeo = new THREE.BufferGeometry().setFromPoints(outer);
+    const ringMat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 1 });
+    const ringLine = new THREE.Line(ringGeo, ringMat);
+    ringLine.renderOrder = 2;
+
+    return [fillMesh, ringLine];
   }, [zone]);
-  return <primitive object={obj} />;
+
+  return <>{objs.map((o, i) => <primitive key={i} object={o} />)}</>;
 }
 
 // ── BACKGROUND DOTS ───────────────────────────────────────────────────────────
@@ -316,7 +400,7 @@ function BackgroundDots({ data }: { data: [number,number][] }) {
     });
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(pos,3));
-    return new THREE.Points(geo, new THREE.PointsMaterial({ color:"#b4b4c8", size:0.003, transparent:true, opacity:0.65, sizeAttenuation:true }));
+    return new THREE.Points(geo, new THREE.PointsMaterial({ color:"#b4b4c8", size:0.0045, transparent:true, opacity:0.65, sizeAttenuation:true }));
   }, [data]);
   return <primitive object={pts} />;
 }
@@ -455,54 +539,150 @@ function TrackLabel({ route, isMtcd, isApw, apwZones, altRef }: {
 }
 
 // ── AIRCRAFT PLANE SPRITE ─────────────────────────────────────────────────────
+function shadeHex(hex: string, amt: number): string {
+  const n = parseInt(hex.replace("#", ""), 16);
+  const clamp = (v: number) => Math.min(255, Math.max(0, v));
+  return `rgb(${clamp((n>>16)+amt)},${clamp(((n>>8)&0xff)+amt)},${clamp((n&0xff)+amt)})`;
+}
+
 function makePlaneMat(color: string): THREE.SpriteMaterial {
-  const canvas = document.createElement("canvas");
-  canvas.width = 64; canvas.height = 64;
-  const ctx = canvas.getContext("2d")!;
-  ctx.clearRect(0, 0, 64, 64);
+  const S = 192;
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = S;
+  const g = cv.getContext("2d")!;
+  const cx = S / 2, cy = S / 2;
 
-  // ── airplane shape pointing UP (nose at top) ──
-  const drawPath = () => {
-    ctx.beginPath();
-    // Fuselage
-    ctx.moveTo(32, 6);   // nose
-    ctx.lineTo(35.5, 42);
-    ctx.lineTo(32, 38);
-    ctx.lineTo(28.5, 42);
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
+  const dark  = "rgba(0,0,0,0.65)";
+  const dim   = "rgba(0,0,0,0.35)";
+  const shade = shadeHex(color, -40);
 
-    // Main wings
-    ctx.beginPath();
-    ctx.moveTo(32, 20);
-    ctx.lineTo(58, 36);
-    ctx.lineTo(56, 39);
-    ctx.lineTo(34, 26);
-    ctx.lineTo(30, 26);
-    ctx.lineTo(8, 39);
-    ctx.lineTo(6, 36);
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
-
-    // Tail fins
-    ctx.beginPath();
-    ctx.moveTo(32, 38);
-    ctx.lineTo(44, 50);
-    ctx.lineTo(42, 52);
-    ctx.lineTo(32, 42);
-    ctx.lineTo(22, 52);
-    ctx.lineTo(20, 50);
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
+  const fill = (col: string, stroke = dark, lw = 1.5) => {
+    g.fillStyle = col; g.strokeStyle = stroke; g.lineWidth = lw;
+    g.fill(); g.stroke();
   };
 
-  ctx.fillStyle = color;
-  ctx.strokeStyle = "rgba(0,0,0,0.55)";
-  ctx.lineWidth = 1.5;
-  ctx.lineJoin = "round";
-  drawPath();
+  // ── FUSELAGE – smooth tapered cigar, nose up ──────────────────────────────
+  // nose tip: cy-56, tail tip: cy+56
+  g.beginPath();
+  g.moveTo(cx, cy - 56);
+  g.bezierCurveTo(cx + 5,  cy - 42, cx + 8,  cy - 20, cx + 8,  cy);
+  g.bezierCurveTo(cx + 8,  cy + 22, cx + 5,  cy + 40, cx + 2,  cy + 56);
+  g.lineTo(cx - 2, cy + 56);
+  g.bezierCurveTo(cx - 5,  cy + 40, cx - 8,  cy + 22, cx - 8,  cy);
+  g.bezierCurveTo(cx - 8,  cy - 20, cx - 5,  cy - 42, cx, cy - 56);
+  g.closePath();
+  // Longitudinal gradient for subtle 3-D depth
+  const fGrd = g.createLinearGradient(cx - 8, 0, cx + 8, 0);
+  fGrd.addColorStop(0,   shade);
+  fGrd.addColorStop(0.4, color);
+  fGrd.addColorStop(0.6, color);
+  fGrd.addColorStop(1,   shade);
+  g.fillStyle = fGrd;
+  g.strokeStyle = dark; g.lineWidth = 1.5;
+  g.fill(); g.stroke();
 
-  const tex = new THREE.CanvasTexture(canvas);
+  // ── MAIN WINGS – swept ≈ 28° ──────────────────────────────────────────────
+  // root LE: (cx±8, cy-8)  root TE: (cx±8, cy+12)
+  // tip  LE: (cx±80, cy+20) tip TE: (cx±70, cy+34)
+  g.lineJoin = "round";
+
+  // Right wing
+  g.beginPath();
+  g.moveTo(cx + 8,  cy - 8);
+  g.lineTo(cx + 80, cy + 20);  // tip LE
+  g.lineTo(cx + 70, cy + 34);  // tip TE
+  g.lineTo(cx + 8,  cy + 12);  // root TE
+  g.closePath();
+  fill(color, dim, 1.2);
+
+  // Left wing
+  g.beginPath();
+  g.moveTo(cx - 8,  cy - 8);
+  g.lineTo(cx - 80, cy + 20);
+  g.lineTo(cx - 70, cy + 34);
+  g.lineTo(cx - 8,  cy + 12);
+  g.closePath();
+  fill(color, dim, 1.2);
+
+  // Leading-edge highlight (shimmer)
+  g.beginPath(); g.moveTo(cx + 8, cy - 8); g.lineTo(cx + 80, cy + 20);
+  g.strokeStyle = "rgba(255,255,255,0.30)"; g.lineWidth = 2; g.stroke();
+  g.beginPath(); g.moveTo(cx - 8, cy - 8); g.lineTo(cx - 80, cy + 20);
+  g.stroke();
+
+  // ── WINGLETS – small upswept tip fences ──────────────────────────────────
+  g.strokeStyle = color; g.lineWidth = 2.5;
+  g.beginPath(); g.moveTo(cx+80,cy+20); g.lineTo(cx+86,cy+12); g.stroke();
+  g.beginPath(); g.moveTo(cx-80,cy+20); g.lineTo(cx-86,cy+12); g.stroke();
+
+  // ── ENGINE PODS – under wings ─────────────────────────────────────────────
+  const wingAng = Math.atan2(20 - (-8), 80 - 8); // ~24°
+
+  // Right engine
+  g.save();
+  g.translate(cx + 34, cy + 10);
+  g.rotate(wingAng);
+  g.beginPath();
+  g.ellipse(0, 0, 17, 5.5, 0, 0, Math.PI * 2);
+  g.fillStyle = "#111"; g.fill();
+  g.beginPath();
+  g.ellipse(-7, 0, 8, 4, 0, 0, Math.PI * 2);
+  g.fillStyle = "#555"; g.fill(); // inlet highlight
+  g.restore();
+
+  // Left engine
+  g.save();
+  g.translate(cx - 34, cy + 10);
+  g.rotate(-wingAng);
+  g.beginPath();
+  g.ellipse(0, 0, 17, 5.5, 0, 0, Math.PI * 2);
+  g.fillStyle = "#111"; g.fill();
+  g.beginPath();
+  g.ellipse(7, 0, 8, 4, 0, 0, Math.PI * 2);
+  g.fillStyle = "#555"; g.fill();
+  g.restore();
+
+  // ── HORIZONTAL TAIL STABILIZERS ──────────────────────────────────────────
+  // Right stab
+  g.beginPath();
+  g.moveTo(cx + 3,  cy + 38);
+  g.lineTo(cx + 30, cy + 47);
+  g.lineTo(cx + 26, cy + 56);
+  g.lineTo(cx + 3,  cy + 52);
+  g.closePath();
+  fill(color, dark, 1.0);
+
+  // Left stab
+  g.beginPath();
+  g.moveTo(cx - 3,  cy + 38);
+  g.lineTo(cx - 30, cy + 47);
+  g.lineTo(cx - 26, cy + 56);
+  g.lineTo(cx - 3,  cy + 52);
+  g.closePath();
+  fill(color, dark, 1.0);
+
+  // ── VERTICAL FIN (shadow sliver – top view) ───────────────────────────────
+  g.beginPath();
+  g.moveTo(cx, cy + 22);
+  g.lineTo(cx + 2.5, cy + 56);
+  g.lineTo(cx - 2.5, cy + 56);
+  g.closePath();
+  g.fillStyle = shade; g.fill();
+
+  // ── COCKPIT WINDOW ────────────────────────────────────────────────────────
+  g.beginPath();
+  g.ellipse(cx, cy - 40, 3.5, 6, 0, 0, Math.PI * 2);
+  g.fillStyle = "rgba(160,220,255,0.85)";
+  g.strokeStyle = "rgba(0,0,0,0.4)"; g.lineWidth = 0.8;
+  g.fill(); g.stroke();
+
+  // ── NOSE CONE highlight ───────────────────────────────────────────────────
+  g.beginPath();
+  g.moveTo(cx, cy - 56);
+  g.bezierCurveTo(cx + 2, cy - 48, cx + 2, cy - 44, cx, cy - 40);
+  g.strokeStyle = "rgba(255,255,255,0.35)"; g.lineWidth = 1.5; g.stroke();
+
+  const tex = new THREE.CanvasTexture(cv);
   return new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, sizeAttenuation: true });
 }
 
@@ -548,7 +728,7 @@ function RouteArc3D({
   const planeMat = useMemo(() => makePlaneMat(route.color), [route.color]);
   const planeSprite = useMemo(() => {
     const s = new THREE.Sprite(planeMat);
-    s.scale.set(0.09, 0.09, 1);
+    s.scale.set(0.0275, 0.0275, 1);
     return s;
   }, [planeMat]);
 
@@ -683,12 +863,14 @@ function ConflictMarker({ pos }: { pos: [number,number] }) {
 interface Globe3DProps {
   plans: Array<Record<string,string>>;
   lang?: string;
-  onWaypointInserted?: (planIdx: number, icao: string) => void;
+  onWaypointInserted?: (planIdx: number, icao: string, insertAtRouteIdx: number, coord: [number,number]) => void;
   conflictPoint?: [number,number] | null;
   isMtcdGlobal?: boolean;
+  extraCoordsLookup?: Record<string,[number,number]>;
 }
 
-export default function Globe3D({ plans, lang = "en", onWaypointInserted, conflictPoint, isMtcdGlobal = false }: Globe3DProps) {
+export default function Globe3D({ plans, lang = "en", onWaypointInserted, conflictPoint, isMtcdGlobal = false, extraCoordsLookup = {} }: Globe3DProps) {
+  _extraCoordsLookup = extraCoordsLookup;
   const speedI18n = SPEED_PANEL_I18N[lang] ?? SPEED_PANEL_I18N.en;
 
   const [globeStyle, setGlobeStyle]     = useState<GlobeStyle>("map");
@@ -808,7 +990,7 @@ export default function Globe3D({ plans, lang = "en", onWaypointInserted, confli
       validRoutes.forEach(r => {
         const ll = posRef.current[r.id]; if (!ll) return;
         const altFl = Math.round(getCurrentAltFt(progRef.current[r.id]??0, r.cruiseAltFt)/100);
-        const triggered = suaZones.filter(z => haversineKm(ll,[z.lat,z.lon]) < z.radius_km/3 && altFl>=z.lower_fl && altFl<=z.upper_fl);
+        const triggered = suaZones.filter(z => haversineKm(ll,[z.lat,z.lon]) < z.radius_km && altFl>=z.lower_fl && altFl<=z.upper_fl);
         if (triggered.length) apw[r.id] = triggered;
       });
       setApwByRoute(apw);
@@ -824,13 +1006,8 @@ export default function Globe3D({ plans, lang = "en", onWaypointInserted, confli
     const snap = previewRef.current;
     const info = dragInfo;
     if (snap && info) {
-      setExtraWps3D(prev => {
-        const current = prev[info.routeId] ?? [];
-        const ins = Math.min(info.insertIdx - 1, current.length);
-        const next = [...current.slice(0, ins), snap.latLon, ...current.slice(ins)];
-        return { ...prev, [info.routeId]: next };
-      });
-      onWaypointInserted?.(info.planIdx, snap.icao);
+      // Route update goes through plans.route (source of truth); no local extraWps needed
+      onWaypointInserted?.(info.planIdx, snap.icao, info.insertIdx - 1, snap.latLon);
     }
     setDragInfo(null);
     setPreviewSnap(null);
@@ -957,10 +1134,10 @@ export default function Globe3D({ plans, lang = "en", onWaypointInserted, confli
         {/* Route airport dots */}
         {validRoutes.flatMap(r => [
           <mesh key={`dep-${r.id}`} position={latLonToVec3(r.depCoords[0], r.depCoords[1], 1.013)}>
-            <sphereGeometry args={[0.007,8,8]}/><meshBasicMaterial color={r.color}/>
+            <sphereGeometry args={[0.0035,8,8]}/><meshBasicMaterial color={r.color}/>
           </mesh>,
           <mesh key={`dest-${r.id}`} position={latLonToVec3(r.destCoords[0], r.destCoords[1], 1.013)}>
-            <sphereGeometry args={[0.007,8,8]}/><meshBasicMaterial color={r.color}/>
+            <sphereGeometry args={[0.0035,8,8]}/><meshBasicMaterial color={r.color}/>
           </mesh>,
         ])}
 
@@ -976,7 +1153,7 @@ export default function Globe3D({ plans, lang = "en", onWaypointInserted, confli
             extraWps={extraWps3D[r.id] ?? []}
             speedRef={speedRef} globalRef={globalRef}
             posRef={posRef} progRef={progRef}
-            isMtcd={mtcdPairs.has(r.id) || (isMtcdGlobal && r.planIdx < 2)}
+            isMtcd={mtcdPairs.has(r.id)}
             isApw={(apwByRoute[r.id]?.length ?? 0) > 0}
             apwZones={apwByRoute[r.id] ?? []}
             onStartDrag={setDragInfo}
