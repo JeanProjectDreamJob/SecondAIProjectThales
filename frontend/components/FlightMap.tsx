@@ -1,9 +1,10 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useState, useRef } from "react";
-import { MapContainer, TileLayer, Marker, Polyline, Popup, Tooltip, useMap, CircleMarker, GeoJSON, Circle } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Polyline, Popup, Tooltip, useMap, CircleMarker, GeoJSON, Circle, ZoomControl } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+
 
 const AIRPORT_COORDS: Record<string, [number, number]> = {
   // Airports
@@ -214,12 +215,10 @@ function getMultiRouteDistanceKm(points: [number, number][]) {
   return dist;
 }
 
-function getCurrentAltitudeFt(progress: number, cruiseFt: number, totalKm: number): number {
-  const climbKm = Math.min(120, totalKm * 0.15);
-  const descentKm = Math.min(150, totalKm * 0.15);
-
-  const climbRatio = climbKm / totalKm;
-  const descentRatio = descentKm / totalKm;
+function getCurrentAltitudeFt(progress: number, cruiseFt: number, _totalKm: number): number {
+  // Fixed ratios so descent is always visible regardless of route length
+  const climbRatio = 0.10;
+  const descentRatio = 0.12;
 
   if (progress <= climbRatio) {
     return Math.round((progress / climbRatio) * cruiseFt);
@@ -281,7 +280,40 @@ interface FlightMapProps {
   plans?: PlanItem[] | null;
   onWaypointInserted?: (planIdx: number, icao: string) => void;
   conflictPoint?: [number, number] | null;
+  lang?: string;
 }
+
+type MapStyle = "satellite" | "dark" | "blanc";
+
+const MAP_STYLES: Record<MapStyle, { url: string; attribution: string; label: string; swatch: string }> = {
+  satellite: {
+    url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    attribution: "Tiles &copy; Esri &mdash; Esri, Maxar, Earthstar Geographics",
+    label: "Satellite",
+    swatch: "linear-gradient(135deg,#1a6b2f 0%,#4a9e60 40%,#8ac7a5 70%,#1e6fa0 100%)",
+  },
+  dark: {
+    url: "https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png",
+    attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
+    label: "Dark",
+    swatch: "#0d0d0d",
+  },
+  blanc: {
+    url: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
+    attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
+    label: "Blanc",
+    swatch: "linear-gradient(135deg,#b5d5f5 0%,#f0e68c 50%,#90ee90 100%)",
+  },
+};
+
+const SPEED_PANEL_I18N: Record<string, { panel: string; all: string }> = {
+  en: { panel: "Accelerate flight plan", all: "ALL" },
+  fr: { panel: "Accélérer le plan de vol", all: "TOUS" },
+  ro: { panel: "Accelerați planul de zbor", all: "TOATE" },
+  zh: { panel: "加速飞行计划", all: "全部" },
+  kn: { panel: "ಹಾರಾಟ ಯೋಜನೆ ವೇಗಗೊಳಿಸಿ", all: "ಎಲ್ಲಾ" },
+};
+
 
 interface RouteItem {
   id: string;
@@ -384,6 +416,17 @@ function findInsertIdx(click: [number, number], points: [number, number][]): num
 
 interface DragState { routeId: string; insertIdx: number; point: [number, number] }
 
+function FullscreenInvalidator() {
+  const map = useMap();
+  useEffect(() => {
+    const el = map.getContainer();
+    const ro = new ResizeObserver(() => map.invalidateSize());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [map]);
+  return null;
+}
+
 function MapDragHandler({ isActive, onMove, onCommit }: {
   isActive: boolean;
   onMove: (pt: [number, number]) => void;
@@ -432,7 +475,8 @@ function FitBounds({ points }: { points: [number, number][] }) {
 
 const COLORS = ["#00d2ff", "#ff7a00", "#8b5cf6", "#10b981"];
 
-export default function FlightMap({ plans, onWaypointInserted, conflictPoint }: FlightMapProps) {
+export default function FlightMap({ plans, onWaypointInserted, conflictPoint, lang = "en" }: FlightMapProps) {
+  const speedI18n = SPEED_PANEL_I18N[lang] ?? SPEED_PANEL_I18N.en;
   const [progressByRoute, setProgressByRoute] = useState<Record<string, number>>({});
   const [speedMultiplierByRoute, setSpeedMultiplierByRoute] = useState<Record<string, number>>({});
   const [bgAirports, setBgAirports] = useState<[number, number, string][]>([]);
@@ -450,7 +494,14 @@ export default function FlightMap({ plans, onWaypointInserted, conflictPoint }: 
   const [labelPositions, setLabelPositions] = useState<Record<string, [number, number]>>({});
   const labelOffsetsRef = useRef<Record<string, [number, number]>>({});
   const isDraggingLabelRef = useRef<Record<string, boolean>>({});
+  const [mapStyle, setMapStyle] = useState<MapStyle>("satellite");
+  const [stylePanelOpen, setStylePanelOpen] = useState(false);
+  const [showWaypoints, setShowWaypoints] = useState(false);
+  const [showFir, setShowFir] = useState(true);
+  const [speedPanelOpen, setSpeedPanelOpen] = useState(false);
   const [globalMultiplier, setGlobalMultiplier] = useState(1);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
   const globalMultiplierRef = useRef(1);
   const progressRef = useRef<Record<string, number>>({});
 
@@ -476,6 +527,21 @@ export default function FlightMap({ plans, onWaypointInserted, conflictPoint }: 
   useEffect(() => { speedMultiplierRef.current = speedMultiplierByRoute; }, [speedMultiplierByRoute]);
   useEffect(() => { globalMultiplierRef.current = globalMultiplier; }, [globalMultiplier]);
   useEffect(() => { extraWaypointsRef.current = extraWaypointsByRoute; }, [extraWaypointsByRoute]);
+
+  useEffect(() => {
+    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
+  }, []);
+
+  function toggleFullscreen() {
+    if (!containerRef.current) return;
+    if (!document.fullscreenElement) {
+      containerRef.current.requestFullscreen();
+    } else {
+      document.exitFullscreen();
+    }
+  }
   useEffect(() => { dragStateRef.current = dragState; }, [dragState]);
 
   const validRoutes = useMemo(() => {
@@ -626,7 +692,7 @@ export default function FlightMap({ plans, onWaypointInserted, conflictPoint }: 
         const triggered: SuaZone[] = [];
         suaZones.forEach((zone) => {
           const distKm = getRouteDistanceKm(pos, [zone.lat, zone.lon]);
-          if (distKm < zone.radius_km && currentAltFl >= zone.lower_fl && currentAltFl <= zone.upper_fl) {
+          if (distKm < zone.radius_km / 3 && currentAltFl >= zone.lower_fl && currentAltFl <= zone.upper_fl) {
             triggered.push(zone);
           }
         });
@@ -674,72 +740,182 @@ export default function FlightMap({ plans, onWaypointInserted, conflictPoint }: 
     return [lat, lon] as [number, number];
   }, [allPoints]);
 
+  // Globe view: routes as arcs + current aircraft positions as dots
   function setRouteMultiplier(routeId: string, value: number) {
     setSpeedMultiplierByRoute((prev) => ({ ...prev, [routeId]: value }));
   }
 
   return (
-    <div className="rounded overflow-hidden border border-zinc-200 dark:border-zinc-700 relative" style={{ minHeight: "24rem" }}>
-      {validRoutes.length > 0 && (
-        <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-1.5">
+    <div ref={containerRef} className="rounded overflow-hidden border border-zinc-200 dark:border-zinc-700 relative" style={{ height: isFullscreen ? "100vh" : "24rem" }}>
+
+      {/* Top-left controls row: style picker + waypoints toggle */}
+      <div className="absolute top-3 left-3 z-[1000] flex flex-row items-start gap-2">
+
+      {/* Map style picker */}
+      <div className="flex flex-col items-start gap-1">
+        <button
+          onClick={() => setStylePanelOpen(v => !v)}
+          className="flex items-center gap-1.5 bg-zinc-800/95 hover:bg-zinc-700/95 text-white font-mono text-[10px] font-bold px-2.5 py-1.5 rounded shadow-lg transition-colors cursor-pointer select-none"
+          style={{ backdropFilter: "blur(6px)" }}
+        >
+          <span
+            className="inline-block w-3 h-3 rounded-sm border border-white/20 flex-shrink-0"
+            style={{ background: MAP_STYLES[mapStyle].swatch }}
+          />
+          <span>{MAP_STYLES[mapStyle].label}</span>
+          <span className="text-zinc-400 ml-0.5">{stylePanelOpen ? "▲" : "▼"}</span>
+        </button>
+
+        {stylePanelOpen && (
           <div
-            className="flex items-center gap-1 bg-zinc-800/90 rounded-full px-2 py-1 shadow-lg"
-            style={{ backdropFilter: "blur(4px)" }}
+            className="flex flex-col gap-1 bg-zinc-900/95 rounded shadow-xl p-1.5 border border-zinc-700/60"
+            style={{ backdropFilter: "blur(6px)" }}
           >
-            <span className="font-mono text-[10px] font-bold w-14 text-zinc-300">ALL</span>
-            <button
-              onClick={() => setGlobalMultiplier((v) => Math.max(1, v === 10 ? 1 : v - 10))}
-              disabled={globalMultiplier <= 1}
-              className="w-6 h-6 rounded-full flex items-center justify-center text-white hover:bg-white/20 disabled:opacity-30 font-bold text-sm transition-all active:scale-90 cursor-pointer select-none"
-            >
-              −
-            </button>
-            <span className="text-zinc-200 font-mono text-[10px] w-7 text-center select-none">{globalMultiplier}x</span>
-            <button
-              onClick={() => setGlobalMultiplier((v) => Math.min(100, v === 1 ? 10 : v + 10))}
-              disabled={globalMultiplier >= 100}
-              className="w-6 h-6 rounded-full flex items-center justify-center text-white hover:bg-white/20 disabled:opacity-30 font-bold text-sm transition-all active:scale-90 cursor-pointer select-none"
-            >
-              +
-            </button>
-          </div>
-          {validRoutes.map((r) => {
-            const mult = speedMultiplierByRoute[r.id] ?? 1;
-            return (
-              <div
-                key={r.id}
-                className="flex items-center gap-1 bg-black/80 rounded-full px-2 py-1 shadow-lg"
-                style={{ backdropFilter: "blur(4px)" }}
+            {(["satellite", "blanc", "dark"] as MapStyle[]).map(s => (
+              <button
+                key={s}
+                onClick={() => { setMapStyle(s); setStylePanelOpen(false); }}
+                className={`flex items-center gap-2 px-2 py-1 rounded text-[10px] font-mono font-bold cursor-pointer select-none transition-colors
+                  ${mapStyle === s ? "bg-blue-600/80 text-white" : "text-zinc-300 hover:bg-zinc-700/70 hover:text-white"}`}
               >
-                <span className="font-mono text-[10px] font-bold w-14 truncate" style={{ color: r.color }}>
-                  {r.callsign || r.id}
-                </span>
+                <span
+                  className="inline-block w-4 h-4 rounded border border-white/20 flex-shrink-0"
+                  style={{ background: MAP_STYLES[s].swatch }}
+                />
+                {MAP_STYLES[s].label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Waypoints toggle */}
+      <button
+        onClick={() => setShowWaypoints(v => !v)}
+        className={`flex items-center gap-1.5 font-mono text-[10px] font-bold px-2.5 py-1.5 rounded shadow-lg transition-colors cursor-pointer select-none border
+          ${showWaypoints
+            ? "bg-zinc-800/95 hover:bg-zinc-700/95 text-white border-zinc-600/50"
+            : "bg-zinc-900/80 text-zinc-500 border-zinc-700/40 hover:text-zinc-300"}`}
+        style={{ backdropFilter: "blur(6px)" }}
+      >
+        <span>{showWaypoints ? "◉" : "○"}</span>
+        <span>Waypoints</span>
+      </button>
+
+      {/* FIR toggle */}
+      <button
+        onClick={() => setShowFir(v => !v)}
+        className={`flex items-center gap-1.5 font-mono text-[10px] font-bold px-2.5 py-1.5 rounded shadow-lg transition-colors cursor-pointer select-none border
+          ${showFir
+            ? "bg-zinc-800/95 hover:bg-zinc-700/95 text-white border-zinc-600/50"
+            : "bg-zinc-900/80 text-zinc-500 border-zinc-700/40 hover:text-zinc-300"}`}
+        style={{ backdropFilter: "blur(6px)" }}
+      >
+        <span>{showFir ? "◉" : "○"}</span>
+        <span>FIR</span>
+      </button>
+
+      </div>{/* end top-left controls row */}
+
+      {/* Fullscreen toggle — bottom right, above attribution */}
+      <div className="absolute bottom-7 right-3 z-[1000]">
+        <button
+          onClick={toggleFullscreen}
+          title={isFullscreen ? "Quitter plein écran" : "Plein écran"}
+          className="flex items-center gap-1.5 bg-zinc-800/95 hover:bg-zinc-700/95 text-white font-mono text-[10px] font-bold px-2.5 py-1.5 rounded shadow-lg transition-colors cursor-pointer select-none border border-zinc-600/50"
+          style={{ backdropFilter: "blur(6px)" }}
+        >
+          <span>{isFullscreen ? "⊡" : "⊞"}</span>
+          <span>{isFullscreen ? "Exit" : "Full"}</span>
+        </button>
+      </div>
+
+      {validRoutes.length > 0 && (
+        <div className="absolute top-3 right-3 z-[1000] flex flex-col items-end gap-0" style={{ maxWidth: 220 }}>
+          {/* Toggle button */}
+          <button
+            onClick={() => setSpeedPanelOpen(v => !v)}
+            className="flex items-center gap-1.5 bg-zinc-800/95 hover:bg-zinc-700/95 text-white font-mono text-[10px] font-bold px-3 py-1.5 rounded shadow-lg transition-colors cursor-pointer select-none"
+            style={{ backdropFilter: "blur(6px)" }}
+          >
+            <span className="text-yellow-300">⏩</span>
+            <span>{speedI18n.panel}</span>
+            <span className="ml-1 text-zinc-400">{speedPanelOpen ? "▲" : "▼"}</span>
+          </button>
+
+          {/* Collapsible panel */}
+          {speedPanelOpen && (
+            <div
+              className="mt-1 flex flex-col gap-1 bg-zinc-900/95 rounded shadow-xl p-2 w-full border border-zinc-700/60"
+              style={{ backdropFilter: "blur(6px)" }}
+            >
+              {/* Global row */}
+              <div className="flex items-center gap-1 border-b border-zinc-700 pb-1 mb-0.5">
+                <span className="font-mono text-[10px] font-bold w-16 text-zinc-300 truncate">{speedI18n.all}</span>
                 <button
-                  onClick={() => setRouteMultiplier(r.id, Math.max(1, mult - 10))}
-                  disabled={mult <= 1}
-                  className="w-6 h-6 rounded-full flex items-center justify-center text-white hover:bg-white/20 disabled:opacity-30 font-bold text-sm transition-all active:scale-90 cursor-pointer select-none"
-                >
-                  −
-                </button>
-                <span className="text-white font-mono text-[10px] w-7 text-center select-none">{mult}x</span>
+                  onClick={() => setGlobalMultiplier((v) => Math.max(1, v === 10 ? 1 : v - 10))}
+                  disabled={globalMultiplier <= 1}
+                  className="w-6 h-6 rounded flex items-center justify-center text-white bg-zinc-700 hover:bg-zinc-600 disabled:opacity-30 font-bold text-sm transition-all active:scale-90 cursor-pointer select-none"
+                >−</button>
+                <span className="text-zinc-200 font-mono text-[10px] w-7 text-center select-none">{globalMultiplier}x</span>
                 <button
-                  onClick={() => setRouteMultiplier(r.id, Math.min(100, mult === 1 ? 10 : mult + 10))}
-                  disabled={mult >= 100}
-                  className="w-6 h-6 rounded-full flex items-center justify-center text-white hover:bg-white/20 disabled:opacity-30 font-bold text-sm transition-all active:scale-90 cursor-pointer select-none"
-                >
-                  +
-                </button>
+                  onClick={() => setGlobalMultiplier((v) => Math.min(100, v === 1 ? 10 : v + 10))}
+                  disabled={globalMultiplier >= 100}
+                  className="w-6 h-6 rounded flex items-center justify-center text-white bg-zinc-700 hover:bg-zinc-600 disabled:opacity-30 font-bold text-sm transition-all active:scale-90 cursor-pointer select-none"
+                >+</button>
               </div>
-            );
-          })}
+
+              {/* Per-route rows */}
+              {validRoutes.map((r) => {
+                const mult = speedMultiplierByRoute[r.id] ?? 1;
+                return (
+                  <div key={r.id} className="flex items-center gap-1">
+                    <span className="font-mono text-[10px] font-bold w-16 truncate" style={{ color: r.color }}>
+                      {r.callsign || r.id}
+                    </span>
+                    <button
+                      onClick={() => setRouteMultiplier(r.id, Math.max(1, mult - 10))}
+                      disabled={mult <= 1}
+                      className="w-6 h-6 rounded flex items-center justify-center text-white bg-zinc-700 hover:bg-zinc-600 disabled:opacity-30 font-bold text-sm transition-all active:scale-90 cursor-pointer select-none"
+                    >−</button>
+                    <span className="text-white font-mono text-[10px] w-7 text-center select-none">{mult}x</span>
+                    <button
+                      onClick={() => setRouteMultiplier(r.id, Math.min(100, mult === 1 ? 10 : mult + 10))}
+                      disabled={mult >= 100}
+                      className="w-6 h-6 rounded flex items-center justify-center text-white bg-zinc-700 hover:bg-zinc-600 disabled:opacity-30 font-bold text-sm transition-all active:scale-90 cursor-pointer select-none"
+                    >+</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
-      <MapContainer center={center} zoom={allPoints.length ? 3 : 2} scrollWheelZoom={true} style={{ height: "24rem", width: "100%" }}>
-        <TileLayer
-          attribution='Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community'
-          url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-        />
-        {firData && (
+      <MapContainer center={center} zoom={allPoints.length ? 3 : 2} scrollWheelZoom={true} zoomControl={false}
+        style={{ height: "100%", width: "100%", background: mapStyle === "dark" ? "#0d0d0d" : undefined }}>
+        <FullscreenInvalidator />
+        <ZoomControl position="bottomleft" />
+        {mapStyle === "dark" ? (
+          <>
+            {/* Pure black base + borders-only overlay */}
+            <TileLayer key="dark-base"
+              attribution="&copy; OpenStreetMap contributors &copy; CARTO"
+              url="https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png"
+            />
+            <TileLayer key="dark-borders"
+              attribution=""
+              url="https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png"
+              opacity={0.7}
+            />
+          </>
+        ) : (
+          <TileLayer
+            key={mapStyle}
+            attribution={MAP_STYLES[mapStyle].attribution}
+            url={MAP_STYLES[mapStyle].url}
+          />
+        )}
+        {firData && showFir && (
           <GeoJSON
             key="fir"
             data={firData}
@@ -766,7 +942,7 @@ export default function FlightMap({ plans, onWaypointInserted, conflictPoint }: 
             <Circle
               key={zone.id}
               center={[zone.lat, zone.lon]}
-              radius={zone.radius_km * 1000}
+              radius={zone.radius_km * 1000 / 3}
               pathOptions={{
                 color,
                 fillColor: color,
@@ -778,10 +954,10 @@ export default function FlightMap({ plans, onWaypointInserted, conflictPoint }: 
             />
           );
         })}
-        {bgAirports.map((pos, i) => (
+        {showWaypoints && bgAirports.map((pos, i) => (
           <CircleMarker key={`apt-${i}`} center={[pos[0], pos[1]]} radius={2} pathOptions={{ color: "#d4d4d4", fillColor: "#d4d4d4", fillOpacity: 0.7, weight: 0 }} />
         ))}
-        {bgWaypoints.map((pos, i) => (
+        {showWaypoints && bgWaypoints.map((pos, i) => (
           <CircleMarker key={`wpt-${i}`} center={[pos[0], pos[1]]} radius={2} pathOptions={{ color: "#a3a3a3", fillColor: "#a3a3a3", fillOpacity: 0.9, weight: 0 }} />
         ))}
         {dragState && (
